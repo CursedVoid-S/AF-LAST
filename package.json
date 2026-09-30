@@ -1,0 +1,13 @@
+{
+  "name": "afk-fishing-bot",
+  "version": "1.0.0",
+  "private": true,
+  "main": "fishing.js",
+  "scripts": {
+    "start": "node fishing.js"
+  },
+  "dependencies": {
+    "mineflayer": "latest",
+    "mineflayer-pathfinder": "latest"
+  }
+}
