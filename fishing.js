@@ -182,10 +182,66 @@ async function ensureRod(b) {
   return true
 }
 
+// FUNGSI MEMANCING KHUSUS MANDIRI PER-BOT
+function customFish(botState) {
+  return new Promise((resolve, reject) => {
+    const b = botState.bot
+    let myBobberId = null
+
+    // Saring umpan/bobber milik bot ini
+    const onEntitySpawn = (entity) => {
+      if (
+        (entity.name === 'fishing_bobber' || entity.entityType === 101) &&
+        entity.objectData &&
+        entity.objectData === b.entity.id
+      ) {
+        myBobberId = entity.id
+      }
+    }
+
+    // Deteksi jika umpan milik bot ini yang bergerak/ditarik ikan
+    const onEntityUpdate = (entity) => {
+      if (myBobberId && entity.id === myBobberId) {
+        const isBiting = entity.metadata && entity.metadata.some((m) => m === true)
+        if (isBiting) {
+          cleanup()
+          b.activateItem()
+          resolve()
+        }
+      }
+    }
+
+    const onBite = () => {
+      if (b.bobber && myBobberId && b.bobber.id === myBobberId) {
+        cleanup()
+        b.activateItem()
+        resolve()
+      }
+    }
+
+    const cleanup = () => {
+      b.removeListener('entitySpawn', onEntitySpawn)
+      b.removeListener('entityUpdate', onEntityUpdate)
+      b.removeListener('playerCollect', onBite)
+    }
+
+    b.on('entitySpawn', onEntitySpawn)
+    b.on('entityUpdate', onEntityUpdate)
+    b.on('playerCollect', onBite)
+
+    // Melempar kail
+    try {
+      b.activateItem()
+    } catch (err) {
+      cleanup()
+      return reject(err)
+    }
+  })
+}
+
 async function fishLoop(botState) {
   const b = botState.bot
   console.log(`[${botState.account.username}] Siap memancing...`)
-  let timeoutsInRow = 0
 
   while (active(botState)) {
     if (idle(botState)) {
@@ -215,15 +271,13 @@ async function fishLoop(botState) {
 
     botState.stats.casts++
     try {
-      await withTimeout(b.fish(), CONFIG.castTimeoutMs)
+      await withTimeout(customFish(botState), CONFIG.castTimeoutMs)
       botState.stats.catches++
-      timeoutsInRow = 0
       botState.reconnects = 0
     } catch (e) {
       if (idle(botState)) {
-        timeoutsInRow = 0
+        // Abaikan jika sedang paused/following
       } else if (e.message === 'timeout') {
-        timeoutsInRow++
         try { b.activateItem() } catch {}
         await sleep(1500)
       } else {
@@ -234,7 +288,7 @@ async function fishLoop(botState) {
     if (botState.stats.casts % 20 === 0) {
       console.log(`[${botState.account.username}] Lemparan ${botState.stats.casts}, tangkapan ${botState.stats.catches}`)
     }
-    await sleep(300)
+    await sleep(1000)
   }
 }
 
@@ -316,8 +370,8 @@ function startBot(account, index) {
     })
   }
 
-  // Jeda masuk antar bot diset 15 detik (15000 ms)
-  setTimeout(connect, index * 15000)
+  // Jeda masuk antar bot diset 25 detik (25000 ms)
+  setTimeout(connect, index * 25000)
 }
 
 ACCOUNTS.forEach((account, i) => startBot(account, i))
