@@ -89,7 +89,7 @@ async function pauseWith(b, reason) {
 }
 
 function statusText(b) {
-  const mode = state.following ? 'mengikuti' : state.paused ? 'berhenti' : 'memancing'
+  const mode = state.following ? 'mengikuti' : state.paused ? 'berhenti (manual)' : 'memancing'
   const p = b.entity.position
   return `Status: ${mode} | food ${b.food}/20 | hp ${Math.round(b.health)} | lempar ${stats.casts} | dapat ${stats.catches} | makan ${stats.meals} | slot kosong ${b.inventory.emptySlotCount()} | pos ${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
 }
@@ -122,12 +122,12 @@ async function runCommand(b, cmd) {
   if (cmd === 'info1') {
     tell(b, statusText(b))
   } else if (cmd === 'stop1') {
-    await pauseWith(b, 'Berhenti. Kirim lanjut1 untuk mulai memancing lagi.')
+    await pauseWith(b, 'Berhenti manual. Kirim lanjut1 untuk memancing lagi.')
   } else if (cmd === 'lanjut1') {
     stopFollow(b)
     state.paused = false
     state.needFace = true
-    tell(b, 'Lanjut memancing dari posisi ini.')
+    tell(b, 'Melanjutkan pemindaian air dan memancing.')
   } else if (cmd === 'ikut1') {
     startFollow(b)
   } else if (cmd === 'sini1') {
@@ -219,40 +219,54 @@ async function faceWater(b) {
 }
 
 async function fishLoop(b) {
-  console.log('Bot siap. Menunggu perintah atau mulai memancing')
+  console.log('Bot siap. Memulai pengecekan otomatis untuk memancing...')
   let timeoutsInRow = 0
+
   while (active(b)) {
     if (idle()) {
       await sleep(500)
       continue
     }
-    if (state.needFace) {
-      if (!(await faceWater(b))) {
-        await pauseWith(b, 'Tidak ada air dalam jangkauan. Kirim sini1 atau ikut1, lalu lanjut1 di dekat air.')
-        continue
-      }
-      state.needFace = false
-    }
-    if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
-      await eat(b)
-      state.needFace = true
-      continue
-    }
-    if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
-      await pauseWith(b, 'Inventori penuh, berhenti memancing.')
-      continue
-    }
+
+    // 1. Cek Ketersediaan Fishing Rod
     let hasRod = false
     try {
       hasRod = await ensureRod(b)
     } catch (e) {
       console.log('Gagal memegang pancingan:', e.message)
     }
+
     if (!hasRod) {
-      if (!idle()) await pauseWith(b, 'Tidak ada fishing rod di inventori, berhenti.')
+      console.log('Menunggu fishing rod di inventori...')
+      await sleep(3000)
       continue
     }
 
+    // 2. Cek Air & Menghadap ke Air secara Otomatis
+    if (state.needFace) {
+      const foundWater = await faceWater(b)
+      if (!foundWater) {
+        console.log('Tidak ada air di dekat bot. Menunggu air...')
+        await sleep(3000)
+        continue
+      }
+      state.needFace = false
+      console.log('Air ditemukan dan dihadap. Otomatis mulai melempar pancingan!')
+    }
+
+    // 3. Cek Kebiasaan Makan & Kapasitas Inventori
+    if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
+      await eat(b)
+      state.needFace = true
+      continue
+    }
+
+    if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
+      await pauseWith(b, 'Inventori penuh, berhenti memancing.')
+      continue
+    }
+
+    // 4. Proses Memancing
     stats.casts++
     try {
       await withTimeout(b.fish(), CONFIG.castTimeoutMs)
@@ -269,13 +283,15 @@ async function fishLoop(b) {
         if (timeoutsInRow === 5) state.needFace = true
         if (timeoutsInRow >= CONFIG.maxTimeoutsInRow) {
           timeoutsInRow = 0
-          await pauseWith(b, 'Terlalu sering tidak ada gigitan, mungkin pelampung tidak jatuh di air. Berhenti.')
+          console.log('Terlalu banyak timeout memancing, memindai ulang lokasi air...')
+          state.needFace = true
         }
       } else {
         console.log('Error memancing:', e.message)
         await sleep(2000)
       }
     }
+
     if (stats.casts % 20 === 0) {
       console.log(`Lemparan ${stats.casts}, tangkapan ${stats.catches}, makan ${stats.meals}, food ${b.food}/20`)
     }
@@ -305,6 +321,7 @@ function start() {
   })
   bot = b
   b.loadPlugin(pathfinder)
+  state.paused = false
   state.following = false
   state.needFace = true
   let authSent = false
@@ -334,7 +351,11 @@ function start() {
   })
   b.on('respawn', async () => {
     await sleep(3000)
-    if (active(b)) tell(b, 'Bot mati dan respawn. Kirim sini1, lalu lanjut1 atau ikut1.')
+    if (active(b)) {
+      state.paused = false
+      state.needFace = true
+      tell(b, 'Bot respawn. Otomatis memencet scan air untuk memancing.')
+    }
   })
   b.once('end', (r) => {
     console.log('Koneksi terputus:', r)
