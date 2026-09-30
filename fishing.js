@@ -14,8 +14,6 @@ const CONFIG = {
   eatUntil: 18,
   afterLoginWaitMs: 5000,
   startCommands: [],
-  waterMin: 3,
-  waterMax: 20,
   castTimeoutMs: 45000,
   maxTimeoutsInRow: 5,
   stopWhenFull: true,
@@ -33,7 +31,7 @@ const AVOID_FOOD = new Set([
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const stats = { casts: 0, catches: 0, meals: 0 }
-const state = { paused: false, following: false, needFace: true }
+const state = { paused: false, following: false }
 const lastCmd = { name: '', t: 0 }
 let bot = null
 let shuttingDown = false
@@ -126,8 +124,7 @@ async function runCommand(b, cmd) {
   } else if (cmd === 'lanjut1') {
     stopFollow(b)
     state.paused = false
-    state.needFace = true
-    tell(b, 'Melanjutkan pemindaian air dan memancing.')
+    tell(b, 'Melanjutkan memancing ke arah pandang saat ini.')
   } else if (cmd === 'ikut1') {
     startFollow(b)
   } else if (cmd === 'sini1') {
@@ -204,62 +201,8 @@ async function ensureRod(b) {
   return true
 }
 
-async function faceWater(b) {
-  const waterBlock = b.registry.blocksByName.water
-  if (!waterBlock) return false
-  const waterId = waterBlock.id
-  const eye = b.entity.position.offset(0, b.entity.height, 0)
-
-  const waterBlocks = b.findBlocks({
-    matching: waterId,
-    maxDistance: CONFIG.waterMax,
-    count: 300,
-  })
-
-  const validSpots = []
-
-  for (const pos of waterBlocks) {
-    const dist = pos.offset(0.5, 0.5, 0.5).distanceTo(eye)
-    if (dist < CONFIG.waterMin || dist > CONFIG.waterMax) continue
-
-    const blockAbove = b.blockAt(pos.offset(0, 1, 0))
-    const block2Above = b.blockAt(pos.offset(0, 2, 0))
-
-    const isOpenAirAbove =
-      (!blockAbove || blockAbove.type === 0 || !blockAbove.boundingBox || blockAbove.boundingBox === 'empty') &&
-      (!block2Above || block2Above.type === 0 || !block2Above.boundingBox || block2Above.boundingBox === 'empty')
-
-    if (!isOpenAirAbove) continue
-
-    let waterNeighbors = 0
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const neighbor = b.blockAt(pos.offset(dx, 0, dz))
-        if (neighbor && neighbor.type === waterId) waterNeighbors++
-      }
-    }
-
-    if (waterNeighbors >= 5) {
-      validSpots.push({ pos, dist, score: waterNeighbors })
-    }
-  }
-
-  if (validSpots.length === 0) return false
-
-  validSpots.sort((a, b) => {
-    const idealDistA = Math.abs(a.dist - 6)
-    const idealDistB = Math.abs(b.dist - 6)
-    return idealDistA - idealDistB
-  })
-
-  const targetSpot = validSpots[0].pos
-  const targetLook = targetSpot.offset(0.5, 1.4, 0.5)
-  await b.lookAt(targetLook, true)
-  return true
-}
-
 async function fishLoop(b) {
-  console.log('Bot siap. Memulai pengecekan otomatis untuk memancing...')
+  console.log('Bot siap. Langsung melempar pancingan sesuai arah hadap...')
   let timeoutsInRow = 0
 
   while (active(b)) {
@@ -281,20 +224,8 @@ async function fishLoop(b) {
       continue
     }
 
-    if (state.needFace) {
-      const foundWater = await faceWater(b)
-      if (!foundWater) {
-        console.log('Tidak ada air yang cocok di dekat bot. Menunggu air...')
-        await sleep(3000)
-        continue
-      }
-      state.needFace = false
-      console.log('Air ideal ditemukan. Otomatis mulai memancing!')
-    }
-
     if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
       await eat(b)
-      state.needFace = true
       continue
     }
 
@@ -316,12 +247,10 @@ async function fishLoop(b) {
         timeoutsInRow++
         try { b.activateItem() } catch {}
         await sleep(1500)
-        if (timeoutsInRow >= 2) state.needFace = true
 
         if (timeoutsInRow >= CONFIG.maxTimeoutsInRow) {
           timeoutsInRow = 0
-          console.log('Lemparan tidak mendapat gigitan, mencari lokasi air lain...')
-          state.needFace = true
+          console.log('Terlalu sering timeout/gagal dapat ikan. Pastikan arah hadap bot sudah pas ke air.')
         }
       } else {
         console.log('Error memancing:', e.message)
@@ -360,7 +289,6 @@ function start() {
   b.loadPlugin(pathfinder)
   state.paused = false
   state.following = false
-  state.needFace = true
   let authSent = false
 
   b.on('messagestr', (msg) => {
@@ -390,8 +318,7 @@ function start() {
     await sleep(3000)
     if (active(b)) {
       state.paused = false
-      state.needFace = true
-      tell(b, 'Bot respawn. Otomatis memindai air untuk memancing.')
+      tell(b, 'Bot respawn. Siap memancing kembali.')
     }
   })
   b.once('end', (r) => {
