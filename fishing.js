@@ -1,18 +1,9 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
-const { SocksProxyAgent } = require('socks-proxy-agent')
 
-// DAFTAR AKUN BOT
-const ACCOUNTS = [
-  { username: 'Solaris', password: 'memek#1', proxy: null },
-  { username: 'Izanagi', password: 'memek#1', proxy: null },
-  { username: 'Izanami', password: 'memek#1', proxy: null },
-  { 
-    username: 'Itadori', 
-    password: 'memek#1', 
-    proxy: 'socks5://116.105.22.7:1080' // Set ke null jika ingin pakai WARP 1.1.1.1/tanpa proxy
-  },
-]
+// Mengambil Username & Password dari Input Terminal / Workflow
+const username = process.argv[2] || 'Solaris'
+const password = process.argv[3] || 'memek#1'
 
 const CONFIG = {
   host: 'play.sunnysmp.xyz',
@@ -20,20 +11,16 @@ const CONFIG = {
   auth: 'offline',
   owner: 'SolTheMayo',
   chatRegex: /^(?:(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
-  debugChat: true,
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
-  startCommands: [],
   castTimeoutMs: 40000,
-  maxTimeoutsInRow: 5,
   stopWhenFull: true,
   maxReconnect: 10,
   reconnectDelayMs: 20000,
 }
 
 const COMMANDS = new Set(['sini1', 'info1', 'stop1', 'lanjut1', 'ikut1'])
-
 const AVOID_FOOD = new Set([
   'pufferfish', 'spider_eye', 'rotten_flesh', 'poisonous_potato', 'chicken',
   'suspicious_stew', 'golden_apple', 'enchanted_golden_apple', 'chorus_fruit',
@@ -53,7 +40,7 @@ const active = (botState) => botState.bot && !botState.shuttingDown
 const idle = (botState) => botState.state.paused || botState.state.following
 
 function tell(botState, text) {
-  console.log(`[${botState.account.username}][balas]`, text)
+  console.log(`[${username}][balas]`, text)
   try { botState.bot.chat(`/msg ${CONFIG.owner} ${text}`) } catch {}
 }
 
@@ -130,7 +117,7 @@ async function runCommand(botState, cmd) {
 
 function handleChat(botState, raw) {
   const msg = raw.replace(/§./g, '').trim()
-  if (msg.includes(CONFIG.owner)) console.log(`[${botState.account.username}][chat-owner]`, JSON.stringify(msg))
+  if (msg.includes(CONFIG.owner)) console.log(`[${username}][chat-owner]`, JSON.stringify(msg))
   const m = msg.match(CONFIG.chatRegex)
   if (!m) return
   const cmd = m[1].toLowerCase()
@@ -139,8 +126,8 @@ function handleChat(botState, raw) {
   if (cmd === botState.lastCmd.name && now - botState.lastCmd.t < 2000) return
   botState.lastCmd.name = cmd
   botState.lastCmd.t = now
-  console.log(`[${botState.account.username}] Perintah dari ${CONFIG.owner}:`, cmd)
-  runCommand(botState, cmd).catch((e) => console.log(`[${botState.account.username}] Gagal perintah:`, e.message))
+  console.log(`[${username}] Perintah dari ${CONFIG.owner}:`, cmd)
+  runCommand(botState, cmd).catch((e) => console.log(`[${username}] Gagal perintah:`, e.message))
 }
 
 async function dismissMenu(b) {
@@ -164,7 +151,7 @@ function pickFood(b) {
 
 async function eat(botState) {
   const b = botState.bot
-  console.log(`[${botState.account.username}] Lapar (food ${b.food}/20), mulai makan`)
+  console.log(`[${username}] Lapar (food ${b.food}/20), mulai makan`)
   for (let i = 0; i < 12 && active(botState) && !idle(botState) && b.food < CONFIG.eatUntil; i++) {
     const item = pickFood(b)
     if (!item) return
@@ -187,14 +174,12 @@ async function ensureRod(b) {
   return true
 }
 
-// LOGIKA PANCING MANDIRI BERDASARKAN VELOCITY KAIL KHUSUS MILIK BOT
 function customFish(botState) {
   return new Promise((resolve, reject) => {
     const b = botState.bot
     let myBobberEntityId = null
     let fishTimeout = null
 
-    // Catat ID kail yang baru dimunculkan oleh bot ini
     const onEntitySpawn = (entity) => {
       if (
         (entity.name === 'fishing_bobber' || entity.entityType === 101) &&
@@ -205,12 +190,11 @@ function customFish(botState) {
       }
     }
 
-    // Hanya merespons jika kail milik bot ini ditarik ikan (kecepatan Y turun mendadak)
     const onEntityUpdate = (entity) => {
       if (myBobberEntityId && entity.id === myBobberEntityId) {
         if (entity.velocity && entity.velocity.y < -0.1) {
           cleanup()
-          b.activateItem() // Tarik pancingan
+          b.activateItem()
           resolve()
         }
       }
@@ -226,8 +210,7 @@ function customFish(botState) {
     b.on('entityUpdate', onEntityUpdate)
 
     try {
-      b.activateItem() // Lempar pancingan
-      
+      b.activateItem()
       fishTimeout = setTimeout(() => {
         cleanup()
         try { b.activateItem() } catch {}
@@ -242,7 +225,7 @@ function customFish(botState) {
 
 async function fishLoop(botState) {
   const b = botState.bot
-  console.log(`[${botState.account.username}] Siap memancing...`)
+  console.log(`[${username}] Siap memancing...`)
 
   while (active(botState)) {
     if (idle(botState)) {
@@ -285,15 +268,14 @@ async function fishLoop(botState) {
     }
 
     if (botState.stats.casts % 20 === 0) {
-      console.log(`[${botState.account.username}] Lemparan ${botState.stats.casts}, tangkapan ${botState.stats.catches}`)
+      console.log(`[${username}] Lemparan ${botState.stats.casts}, tangkapan ${botState.stats.catches}`)
     }
     await sleep(1000)
   }
 }
 
-function startBot(account, index) {
+function startBot() {
   const botState = {
-    account,
     bot: null,
     shuttingDown: false,
     reconnects: 0,
@@ -304,22 +286,14 @@ function startBot(account, index) {
   }
 
   function connect() {
-    console.log(`[${account.username}] Menghubungkan ke ${CONFIG.host}...`)
+    console.log(`[${username}] Menghubungkan ke ${CONFIG.host}...`)
     
-    const botOptions = {
+    const b = mineflayer.createBot({
       host: CONFIG.host,
       port: CONFIG.port,
-      username: account.username,
+      username: username,
       auth: CONFIG.auth,
-    }
-
-    if (account.proxy) {
-      const agent = new SocksProxyAgent(account.proxy)
-      botOptions.agent = agent
-      console.log(`[${account.username}] Menggunakan Proxy: ${account.proxy}`)
-    }
-
-    const b = mineflayer.createBot(botOptions)
+    })
 
     botState.bot = b
     b.loadPlugin(pathfinder)
@@ -331,36 +305,36 @@ function startBot(account, index) {
       if (!authSent) {
         if (/\/register/i.test(msg)) {
           authSent = true
-          b.chat(`/register ${account.password} ${account.password}`)
+          b.chat(`/register ${password} ${password}`)
         } else if (/\/login/i.test(msg)) {
           authSent = true
-          b.chat(`/login ${account.password}`)
+          b.chat(`/login ${password}`)
         }
       }
       handleChat(botState, msg)
     })
 
-    b.on('error', (e) => console.log(`[${account.username}] Error:`, e.message))
-    b.on('kicked', (r) => console.log(`[${account.username}] Kicked:`, r))
+    b.on('error', (e) => console.log(`[${username}] Error:`, e.message))
+    b.on('kicked', (r) => console.log(`[${username}] Kicked:`, r))
     b.on('death', () => {
-      console.log(`[${account.username}] Mati, bersiap untuk respawn...`)
+      console.log(`[${username}] Mati, bersiap untuk respawn...`)
       botState.state.paused = true
       stopFollow(botState)
     })
 
     b.on('respawn', async () => {
-      console.log(`[${account.username}] Respawned. Menunggu 3 detik sebelum mengirim /back...`)
+      console.log(`[${username}] Respawned. Menunggu 3 detik sebelum mengirim /back...`)
       await sleep(3000)
       if (active(botState)) {
         b.chat('/back')
-        console.log(`[${account.username}] Mengirim /back dan melanjutkan memancing.`)
+        console.log(`[${username}] Mengirim /back dan melanjutkan memancing.`)
         await sleep(2000)
         botState.state.paused = false
       }
     })
 
     b.once('end', () => {
-      console.log(`[${account.username}] Terputus.`)
+      console.log(`[${username}] Terputus.`)
       if (!botState.shuttingDown) {
         botState.reconnects++
         if (botState.reconnects <= CONFIG.maxReconnect) {
@@ -370,16 +344,15 @@ function startBot(account, index) {
     })
 
     b.once('spawn', async () => {
-      console.log(`[${account.username}] Sudah masuk server`)
+      console.log(`[${username}] Sudah masuk server`)
       for (let i = 0; i < 30 && !authSent; i++) await sleep(500)
       await sleep(CONFIG.afterLoginWaitMs)
       await dismissMenu(b)
-      fishLoop(botState).catch((e) => console.log(`[${account.username}] ERROR loop:`, e.message))
+      fishLoop(botState).catch((e) => console.log(`[${username}] ERROR loop:`, e.message))
     })
   }
 
-  // Jeda login per akun 25 detik (25000 ms)
-  setTimeout(connect, index * 25000)
+  connect()
 }
 
-ACCOUNTS.forEach((account, i) => startBot(account, i))
+startBot()
