@@ -8,11 +8,13 @@ const CONFIG = {
   auth: 'offline',
   password: 'memek#1',
   owner: 'SolTheMayo',
-  chatRegex: /^(?:(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
+  chatRegex: /^(?:[^\w\s\[({]+\s*)*(?:[^\s,»]+\s*,\s*)?(?:(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
   debugChat: true,
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
+  moveSteps: 4,
+  moveStepMs: 500,
   startCommands: [],
   waterMin: 2,
   waterMax: 32,
@@ -39,6 +41,7 @@ let bot = null
 let shuttingDown = false
 let reconnects = 0
 let followTimer = null
+let moving = false
 
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -140,12 +143,8 @@ async function runCommand(b, cmd) {
   }
 }
 
-function handleChat(b, raw) {
-  const msg = raw.replace(/§./g, '').trim()
-  if (msg.includes(CONFIG.owner)) console.log('[chat-owner]', JSON.stringify(msg))
-  const m = msg.match(CONFIG.chatRegex)
-  if (!m) return
-  const cmd = m[1].toLowerCase()
+function handleCommand(b, text) {
+  const cmd = String(text).trim().toLowerCase()
   if (!COMMANDS.has(cmd)) return
   const now = Date.now()
   if (cmd === lastCmd.name && now - lastCmd.t < 2000) return
@@ -153,6 +152,47 @@ function handleChat(b, raw) {
   lastCmd.t = now
   console.log('Perintah dari', CONFIG.owner + ':', cmd)
   runCommand(b, cmd).catch((e) => console.log('Gagal menjalankan perintah:', e.message))
+}
+
+function isOwnerName(name) {
+  const n = String(name || '').replace(/§./g, '').trim()
+  if (n === CONFIG.owner) return true
+  const escaped = CONFIG.owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^\\w.])${escaped}$`).test(n)
+}
+
+function commandFromText(text) {
+  const t = String(text || '').replace(/§./g, '').trim()
+  if (COMMANDS.has(t.toLowerCase())) return t
+  const m = t.match(CONFIG.chatRegex)
+  return m ? m[1] : ''
+}
+
+function handleChat(b, raw) {
+  const msg = raw.replace(/§./g, '').trim()
+  if (msg.includes(CONFIG.owner)) console.log('[chat-owner]', JSON.stringify(msg))
+  const m = msg.match(CONFIG.chatRegex)
+  if (m) handleCommand(b, m[1])
+}
+
+async function wiggle(b) {
+  if (moving) return
+  moving = true
+  console.log('Bergerak sedikit supaya chat tidak diblokir anti-spambot')
+  try {
+    for (let i = 0; i < CONFIG.moveSteps; i++) {
+      b.setControlState('forward', true)
+      await sleep(CONFIG.moveStepMs)
+      b.setControlState('forward', false)
+      b.setControlState('back', true)
+      await sleep(CONFIG.moveStepMs)
+      b.setControlState('back', false)
+    }
+  } catch (e) {
+    console.log('Gagal bergerak:', e.message)
+  }
+  try { b.clearControlStates() } catch {}
+  moving = false
 }
 
 async function dismissMenu(b) {
@@ -311,6 +351,7 @@ function start() {
 
   b.on('messagestr', (msg) => {
     if (CONFIG.debugChat) console.log('[raw]', msg)
+    if (/have to move/i.test(msg)) wiggle(b)
     if (/login|register|password|afk|kick|cooldown/i.test(msg)) console.log('[chat]', msg)
     if (!authSent) {
       if (/\/register/i.test(msg)) {
@@ -322,6 +363,21 @@ function start() {
       }
     }
     handleChat(b, msg)
+  })
+
+  b.on('chat', (username, message) => {
+    if (username === b.username) return
+    if (CONFIG.debugChat) console.log('[chat-event]', JSON.stringify(username), ':', message)
+    if (isOwnerName(username)) handleCommand(b, commandFromText(message))
+  })
+
+  b.on('message', (jsonMsg, position, sender) => {
+    if (!sender) return
+    const player = Object.values(b.players).find((x) => x.uuid === sender)
+    if (!player || player.username !== CONFIG.owner) return
+    const text = jsonMsg.toString()
+    if (CONFIG.debugChat) console.log('[msg-sender]', player.username, ':', text)
+    handleCommand(b, commandFromText(text))
   })
 
   b.on('windowOpen', (w) => console.log('Window dibuka:', JSON.stringify(w.title)))
@@ -347,6 +403,7 @@ function start() {
     console.log(`Menunggu ${CONFIG.afterLoginWaitMs / 1000} detik setelah login`)
     await sleep(CONFIG.afterLoginWaitMs)
     await dismissMenu(b)
+    await wiggle(b)
     for (const cmd of CONFIG.startCommands) {
       b.chat(cmd)
       await sleep(3000)
