@@ -8,7 +8,8 @@ const CONFIG = {
   auth: 'offline',
   password: 'memek#1',
   owner: 'SolTheMayo',
-  chatRegex: /^(?:\[[^\]]*\]\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
+  chatRegex: /^(?:(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
+  debugChat: true,
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
@@ -309,6 +310,7 @@ function start() {
   let authSent = false
 
   b.on('messagestr', (msg) => {
+    if (CONFIG.debugChat) console.log('[raw]', msg)
     if (/login|register|password|afk|kick|cooldown/i.test(msg)) console.log('[chat]', msg)
     if (!authSent) {
       if (/\/register/i.test(msg)) {
