@@ -1,45 +1,31 @@
-name: Run All 4 Bots
+name: Run Minecraft AFK Bot
 
 on:
   workflow_dispatch:
+    inputs:
+      bot_username:
+        description: 'Username Akun Minecraft'
+        required: true
+        default: 'Solaris'
+      bot_password:
+        description: 'Password Akun Minecraft'
+        required: true
+        default: 'memek#1'
 
 jobs:
-  run-solaris:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install
-      - run: node fishing.js "Solaris" "memek#1"
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-  run-izanagi:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install
-      - run: node fishing.js "Izanagi" "memek#1"
 
-  run-izanami:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install
-      - run: node fishing.js "Izanami" "memek#1"
+      - name: Install Dependencies
+        run: npm install
 
-  run-itadori:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install
-      - run: node fishing.js "Itadori" "memek#1"
+      - name: Run Bot
+        run: node fishing.js "${{ github.event.inputs.bot_username }}" "${{ github.event.inputs.bot_password }}"
