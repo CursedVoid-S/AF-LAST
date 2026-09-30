@@ -14,10 +14,10 @@ const CONFIG = {
   eatUntil: 18,
   afterLoginWaitMs: 5000,
   startCommands: [],
-  waterMin: 2,
-  waterMax: 32,
+  waterMin: 3,
+  waterMax: 20,
   castTimeoutMs: 45000,
-  maxTimeoutsInRow: 10,
+  maxTimeoutsInRow: 5,
   stopWhenFull: true,
   maxReconnect: 10,
   reconnectDelayMs: 20000,
@@ -205,16 +205,56 @@ async function ensureRod(b) {
 }
 
 async function faceWater(b) {
-  const water = b.registry.blocksByName.water
-  if (!water) return false
+  const waterBlock = b.registry.blocksByName.water
+  if (!waterBlock) return false
+  const waterId = waterBlock.id
   const eye = b.entity.position.offset(0, b.entity.height, 0)
-  const spots = b
-    .findBlocks({ matching: water.id, maxDistance: CONFIG.waterMax, count: 200 })
-    .map((p) => ({ p, d: p.offset(0.5, 0.5, 0.5).distanceTo(eye) }))
-    .filter((x) => x.d >= CONFIG.waterMin)
-    .sort((x, y) => x.d - y.d)
-  if (!spots.length) return false
-  await b.lookAt(spots[0].p.offset(0.5, 0.9, 0.5), true)
+
+  const waterBlocks = b.findBlocks({
+    matching: waterId,
+    maxDistance: CONFIG.waterMax,
+    count: 300,
+  })
+
+  const validSpots = []
+
+  for (const pos of waterBlocks) {
+    const dist = pos.offset(0.5, 0.5, 0.5).distanceTo(eye)
+    if (dist < CONFIG.waterMin || dist > CONFIG.waterMax) continue
+
+    const blockAbove = b.blockAt(pos.offset(0, 1, 0))
+    const block2Above = b.blockAt(pos.offset(0, 2, 0))
+
+    const isOpenAirAbove =
+      (!blockAbove || blockAbove.type === 0 || !blockAbove.boundingBox || blockAbove.boundingBox === 'empty') &&
+      (!block2Above || block2Above.type === 0 || !block2Above.boundingBox || block2Above.boundingBox === 'empty')
+
+    if (!isOpenAirAbove) continue
+
+    let waterNeighbors = 0
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const neighbor = b.blockAt(pos.offset(dx, 0, dz))
+        if (neighbor && neighbor.type === waterId) waterNeighbors++
+      }
+    }
+
+    if (waterNeighbors >= 5) {
+      validSpots.push({ pos, dist, score: waterNeighbors })
+    }
+  }
+
+  if (validSpots.length === 0) return false
+
+  validSpots.sort((a, b) => {
+    const idealDistA = Math.abs(a.dist - 6)
+    const idealDistB = Math.abs(b.dist - 6)
+    return idealDistA - idealDistB
+  })
+
+  const targetSpot = validSpots[0].pos
+  const targetLook = targetSpot.offset(0.5, 1.4, 0.5)
+  await b.lookAt(targetLook, true)
   return true
 }
 
@@ -228,7 +268,6 @@ async function fishLoop(b) {
       continue
     }
 
-    // 1. Cek Ketersediaan Fishing Rod
     let hasRod = false
     try {
       hasRod = await ensureRod(b)
@@ -242,19 +281,17 @@ async function fishLoop(b) {
       continue
     }
 
-    // 2. Cek Air & Menghadap ke Air secara Otomatis
     if (state.needFace) {
       const foundWater = await faceWater(b)
       if (!foundWater) {
-        console.log('Tidak ada air di dekat bot. Menunggu air...')
+        console.log('Tidak ada air yang cocok di dekat bot. Menunggu air...')
         await sleep(3000)
         continue
       }
       state.needFace = false
-      console.log('Air ditemukan dan dihadap. Otomatis mulai melempar pancingan!')
+      console.log('Air ideal ditemukan. Otomatis mulai memancing!')
     }
 
-    // 3. Cek Kebiasaan Makan & Kapasitas Inventori
     if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
       await eat(b)
       state.needFace = true
@@ -266,7 +303,6 @@ async function fishLoop(b) {
       continue
     }
 
-    // 4. Proses Memancing
     stats.casts++
     try {
       await withTimeout(b.fish(), CONFIG.castTimeoutMs)
@@ -280,10 +316,11 @@ async function fishLoop(b) {
         timeoutsInRow++
         try { b.activateItem() } catch {}
         await sleep(1500)
-        if (timeoutsInRow === 5) state.needFace = true
+        if (timeoutsInRow >= 2) state.needFace = true
+
         if (timeoutsInRow >= CONFIG.maxTimeoutsInRow) {
           timeoutsInRow = 0
-          console.log('Terlalu banyak timeout memancing, memindai ulang lokasi air...')
+          console.log('Lemparan tidak mendapat gigitan, mencari lokasi air lain...')
           state.needFace = true
         }
       } else {
@@ -354,7 +391,7 @@ function start() {
     if (active(b)) {
       state.paused = false
       state.needFace = true
-      tell(b, 'Bot respawn. Otomatis memencet scan air untuk memancing.')
+      tell(b, 'Bot respawn. Otomatis memindai air untuk memancing.')
     }
   })
   b.once('end', (r) => {
