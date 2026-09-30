@@ -11,6 +11,7 @@ const CONFIG = {
   chatRegex: /^(?:\[[^\]]*\]\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
   eatBelow: 6,
   eatUntil: 18,
+  afterLoginWaitMs: 5000,
   startCommands: [],
   waterMin: 2,
   waterMax: 32,
@@ -151,6 +152,16 @@ function handleChat(b, raw) {
   lastCmd.t = now
   console.log('Perintah dari', CONFIG.owner + ':', cmd)
   runCommand(b, cmd).catch((e) => console.log('Gagal menjalankan perintah:', e.message))
+}
+
+async function dismissMenu(b) {
+  for (let i = 0; i < 3; i++) {
+    if (b.currentWindow) {
+      console.log('Menu terbuka setelah login, ditutup (Esc)')
+      try { b.closeWindow(b.currentWindow) } catch {}
+    }
+    await sleep(1000)
+  }
 }
 
 function pickFood(b) {
@@ -311,6 +322,7 @@ function start() {
     handleChat(b, msg)
   })
 
+  b.on('windowOpen', (w) => console.log('Window dibuka:', JSON.stringify(w.title)))
   b.on('error', (e) => console.log('Error:', e.message))
   b.on('kicked', (r) => console.log('Kicked:', r))
   b.on('death', () => {
@@ -329,7 +341,10 @@ function start() {
 
   b.once('spawn', async () => {
     console.log('Bot sudah masuk server')
-    await sleep(6000)
+    for (let i = 0; i < 30 && !authSent; i++) await sleep(500)
+    console.log(`Menunggu ${CONFIG.afterLoginWaitMs / 1000} detik setelah login`)
+    await sleep(CONFIG.afterLoginWaitMs)
+    await dismissMenu(b)
     for (const cmd of CONFIG.startCommands) {
       b.chat(cmd)
       await sleep(3000)
