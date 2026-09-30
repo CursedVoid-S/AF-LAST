@@ -286,7 +286,6 @@ function startBot(account, index) {
       stopFollow(botState)
     })
 
-    // FITUR OTOMATIS /BACK SAAT RESPAWN
     b.on('respawn', async () => {
       console.log(`[${account.username}] Respawned. Menunggu 3 detik sebelum mengirim /back...`)
       await sleep(3000)
@@ -317,7 +316,8 @@ function startBot(account, index) {
     })
   }
 
-  setTimeout(connect, index * 3000)
+  // Jeda masuk antar bot diset 15 detik (15000 ms)
+  setTimeout(connect, index * 15000)
 }
 
 ACCOUNTS.forEach((account, i) => startBot(account, i))
