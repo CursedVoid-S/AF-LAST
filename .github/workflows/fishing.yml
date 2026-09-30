@@ -1,15 +1,45 @@
-name: Bot fishing
+name: Run All 4 Bots
+
 on:
   workflow_dispatch:
 
 jobs:
-  run:
+  run-solaris:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install --no-audit --no-fund
-      - run: node fishing.js
+          node-version: 20
+      - run: npm install
+      - run: node fishing.js "Solaris" "memek#1"
+
+  run-izanagi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: node fishing.js "Izanagi" "memek#1"
+
+  run-izanami:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: node fishing.js "Izanami" "memek#1"
+
+  run-itadori:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: node fishing.js "Itadori" "memek#1"
