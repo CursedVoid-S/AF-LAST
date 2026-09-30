@@ -66,7 +66,7 @@ function statusText(botState) {
   const b = botState.bot
   const mode = botState.state.following ? 'mengikuti' : botState.state.paused ? 'berhenti' : 'memancing'
   const p = b.entity.position
-  return `Status: ${mode} | food ${b.food}/20 | hp ${Math.round(b.health)} | lempar ${botState.stats.casts} | dapat ${botState.stats.catches} | makan ${botState.stats.meals} | slot kosong ${b.inventory.emptySlotCount()} | pos ${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+  return `Status: ${mode} | Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches} | Makan: ${botState.stats.meals} | HP: ${Math.round(b.health)} | Slot Kosong: ${b.inventory.emptySlotCount()} | Pos: ${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
 }
 
 function startFollow(botState) {
@@ -177,22 +177,23 @@ async function ensureRod(b) {
 function customFish(botState) {
   return new Promise((resolve, reject) => {
     const b = botState.bot
-    let myBobberEntityId = null
+    let myBobberId = null
     let fishTimeout = null
 
     const onEntitySpawn = (entity) => {
-      if (
-        (entity.name === 'fishing_bobber' || entity.entityType === 101) &&
-        entity.objectData &&
-        entity.objectData === b.entity.id
-      ) {
-        myBobberEntityId = entity.id
+      if (entity.name === 'fishing_bobber' || entity.entityType === 101) {
+        if (entity.position.distanceTo(b.entity.position) < 4) {
+          myBobberId = entity.id
+        }
       }
     }
 
     const onEntityUpdate = (entity) => {
-      if (myBobberEntityId && entity.id === myBobberEntityId) {
-        if (entity.velocity && entity.velocity.y < -0.1) {
+      if (myBobberId && entity.id === myBobberId) {
+        const hasVelocityY = entity.velocity && entity.velocity.y < -0.08
+        const isBiting = entity.metadata && entity.metadata.some((m) => m === true || m === 1)
+
+        if (hasVelocityY || isBiting) {
           cleanup()
           b.activateItem()
           resolve()
@@ -249,7 +250,7 @@ async function fishLoop(botState) {
     }
 
     if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
-      await pauseWith(botState, 'Inventori penuh, berhenti memancing.')
+      await pauseWith(botState, `Inventori penuh. Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
       continue
     }
 
@@ -258,6 +259,7 @@ async function fishLoop(botState) {
       await customFish(botState)
       botState.stats.catches++
       botState.reconnects = 0
+      console.log(`[${username}] Berhasil! Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
     } catch (e) {
       if (idle(botState)) {
       } else if (e.message === 'timeout') {
@@ -267,9 +269,6 @@ async function fishLoop(botState) {
       }
     }
 
-    if (botState.stats.casts % 20 === 0) {
-      console.log(`[${username}] Lemparan ${botState.stats.casts}, tangkapan ${botState.stats.catches}`)
-    }
     await sleep(1000)
   }
 }
@@ -334,7 +333,7 @@ function startBot() {
     })
 
     b.once('end', () => {
-      console.log(`[${username}] Terputus.`)
+      console.log(`[${username}] Terputus. Rekap Akhir -> Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
       if (!botState.shuttingDown) {
         botState.reconnects++
         if (botState.reconnects <= CONFIG.maxReconnect) {
