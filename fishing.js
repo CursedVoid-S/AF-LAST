@@ -1,12 +1,17 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const { SocksProxyAgent } = require('socks-proxy-agent')
 
 // DAFTAR AKUN BOT
 const ACCOUNTS = [
-  { username: 'Solaris', password: 'memek#1' },
-  { username: 'Izanagi', password: 'memek#1' },
-  { username: 'Izanami', password: 'memek#1' },
-  { username: 'Itadori', password: 'memek#1' },
+  { username: 'Solaris', password: 'memek#1', proxy: null },
+  { username: 'Izanagi', password: 'memek#1', proxy: null },
+  { username: 'Izanami', password: 'memek#1', proxy: null },
+  { 
+    username: 'Itadori', 
+    password: 'memek#1', 
+    proxy: 'socks5://116.105.22.7:1080' // Set ke null jika ingin pakai WARP 1.1.1.1/tanpa proxy
+  },
 ]
 
 const CONFIG = {
@@ -20,7 +25,7 @@ const CONFIG = {
   eatUntil: 18,
   afterLoginWaitMs: 5000,
   startCommands: [],
-  castTimeoutMs: 45000,
+  castTimeoutMs: 40000,
   maxTimeoutsInRow: 5,
   stopWhenFull: true,
   maxReconnect: 10,
@@ -182,56 +187,52 @@ async function ensureRod(b) {
   return true
 }
 
-// FUNGSI MEMANCING KHUSUS MANDIRI PER-BOT
+// LOGIKA PANCING MANDIRI BERDASARKAN VELOCITY KAIL KHUSUS MILIK BOT
 function customFish(botState) {
   return new Promise((resolve, reject) => {
     const b = botState.bot
-    let myBobberId = null
+    let myBobberEntityId = null
+    let fishTimeout = null
 
-    // Saring umpan/bobber milik bot ini
+    // Catat ID kail yang baru dimunculkan oleh bot ini
     const onEntitySpawn = (entity) => {
       if (
         (entity.name === 'fishing_bobber' || entity.entityType === 101) &&
         entity.objectData &&
         entity.objectData === b.entity.id
       ) {
-        myBobberId = entity.id
+        myBobberEntityId = entity.id
       }
     }
 
-    // Deteksi jika umpan milik bot ini yang bergerak/ditarik ikan
+    // Hanya merespons jika kail milik bot ini ditarik ikan (kecepatan Y turun mendadak)
     const onEntityUpdate = (entity) => {
-      if (myBobberId && entity.id === myBobberId) {
-        const isBiting = entity.metadata && entity.metadata.some((m) => m === true)
-        if (isBiting) {
+      if (myBobberEntityId && entity.id === myBobberEntityId) {
+        if (entity.velocity && entity.velocity.y < -0.1) {
           cleanup()
-          b.activateItem()
+          b.activateItem() // Tarik pancingan
           resolve()
         }
-      }
-    }
-
-    const onBite = () => {
-      if (b.bobber && myBobberId && b.bobber.id === myBobberId) {
-        cleanup()
-        b.activateItem()
-        resolve()
       }
     }
 
     const cleanup = () => {
       b.removeListener('entitySpawn', onEntitySpawn)
       b.removeListener('entityUpdate', onEntityUpdate)
-      b.removeListener('playerCollect', onBite)
+      if (fishTimeout) clearTimeout(fishTimeout)
     }
 
     b.on('entitySpawn', onEntitySpawn)
     b.on('entityUpdate', onEntityUpdate)
-    b.on('playerCollect', onBite)
 
-    // Melempar kail
     try {
-      b.activateItem()
+      b.activateItem() // Lempar pancingan
+      
+      fishTimeout = setTimeout(() => {
+        cleanup()
+        try { b.activateItem() } catch {}
+        reject(new Error('timeout'))
+      }, CONFIG.castTimeoutMs)
     } catch (err) {
       cleanup()
       return reject(err)
@@ -271,14 +272,12 @@ async function fishLoop(botState) {
 
     botState.stats.casts++
     try {
-      await withTimeout(customFish(botState), CONFIG.castTimeoutMs)
+      await customFish(botState)
       botState.stats.catches++
       botState.reconnects = 0
     } catch (e) {
       if (idle(botState)) {
-        // Abaikan jika sedang paused/following
       } else if (e.message === 'timeout') {
-        try { b.activateItem() } catch {}
         await sleep(1500)
       } else {
         await sleep(2000)
@@ -306,12 +305,21 @@ function startBot(account, index) {
 
   function connect() {
     console.log(`[${account.username}] Menghubungkan ke ${CONFIG.host}...`)
-    const b = mineflayer.createBot({
+    
+    const botOptions = {
       host: CONFIG.host,
       port: CONFIG.port,
       username: account.username,
       auth: CONFIG.auth,
-    })
+    }
+
+    if (account.proxy) {
+      const agent = new SocksProxyAgent(account.proxy)
+      botOptions.agent = agent
+      console.log(`[${account.username}] Menggunakan Proxy: ${account.proxy}`)
+    }
+
+    const b = mineflayer.createBot(botOptions)
 
     botState.bot = b
     b.loadPlugin(pathfinder)
@@ -370,7 +378,7 @@ function startBot(account, index) {
     })
   }
 
-  // Jeda masuk antar bot diset 25 detik (25000 ms)
+  // Jeda login per akun 25 detik (25000 ms)
   setTimeout(connect, index * 25000)
 }
 
