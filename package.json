@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "mineflayer": "latest",
-    "mineflayer-pathfinder": "latest",
-    "socks-proxy-agent": "latest"
+    "mineflayer-pathfinder": "latest"
   }
 }
