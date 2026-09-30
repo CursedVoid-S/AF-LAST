@@ -178,16 +178,33 @@ function handleChat(b, raw) {
 async function wiggle(b) {
   if (moving) return
   moving = true
-  console.log('Bergerak sedikit supaya chat tidak diblokir anti-spambot')
+  console.log('Bergerak supaya chat tidak diblokir anti-spambot')
   try {
-    for (let i = 0; i < CONFIG.moveSteps; i++) {
-      b.setControlState('forward', true)
-      await sleep(CONFIG.moveStepMs)
-      b.setControlState('forward', false)
-      b.setControlState('back', true)
-      await sleep(CONFIG.moveStepMs)
-      b.setControlState('back', false)
+    const start = b.entity.position.clone()
+    const movements = new Movements(b)
+    movements.canDig = false
+    movements.allow1by1towers = false
+    b.pathfinder.setMovements(movements)
+    const offsets = [[5, 0], [-5, 0], [0, 5], [0, -5]]
+    let moved = false
+    for (const [dx, dz] of offsets) {
+      try {
+        await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(start.x + dx, start.z + dz, 1)), 8000)
+      } catch {
+        try { b.pathfinder.setGoal(null) } catch {}
+      }
+      if (b.entity.position.distanceTo(start) >= 3) {
+        moved = true
+        break
+      }
     }
+    if (!moved) {
+      console.log('Pathfinder gagal, bergerak lurus')
+      b.setControlState('forward', true)
+      await sleep(1200)
+      b.setControlState('forward', false)
+    }
+    console.log(`Bot bergeser ${b.entity.position.distanceTo(start).toFixed(1)} blok`)
   } catch (e) {
     console.log('Gagal bergerak:', e.message)
   }
