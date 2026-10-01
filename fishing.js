@@ -1,48 +1,36 @@
 const mineflayer = require('mineflayer')
+const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const https = require('https')
 const { URL } = require('url')
-const {
-  Client,
-  GatewayIntentBits,
-  Events,
-  MessageFlags,
-  SlashCommandBuilder,
-} = require('discord.js')
 
-// ====== KONFIGURASI (isi lewat environment variable) ======
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || ''   // untuk status & log
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || ''       // untuk slash command /chat
-const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || ''         // opsional, agar /chat muncul instan
-const ALLOWED_USER_IDS = (process.env.ALLOWED_USER_IDS || '')       // ID Discord yang boleh pakai /chat, pisah koma
-  .split(',').map((s) => s.trim()).filter(Boolean)
+// URL DISCORD WEBHOOK
+const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1555117262136938526/4QwH449Ji2rLzAtGk0scAwkesLUWeHRXcsQ5BW_R3dYoB2e4jEtdyceA4MvywJIsjt7U'
 
-const PASSWORD = 'memek#1'
+// Daftar 4 Akun
 const ACCOUNTS = [
-  { username: 'Solaris', password: PASSWORD },
-  { username: 'Izanagi', password: PASSWORD },
-  // { username: 'Izanami', password: PASSWORD },
-  { username: 'Itadori', password: PASSWORD },
+  { username: 'Solaris', password: 'memek#1' },
+  { username: 'Izanagi', password: 'memek#1' },
+  { username: 'Izanami', password: 'memek#1' },
+  { username: 'Itadori', password: 'memek#1' },
 ]
 
 const CONFIG = {
   host: 'play.sunnysmp.xyz',
   port: 25565,
   auth: 'offline',
-  version: process.env.MC_VERSION || '1.21.6',
+  owner: 'SolTheMayo',
+  chatRegex: /^(?:(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
   castTimeoutMs: 40000,
-  bobberSettleMs: 2000,
   stopWhenFull: false,
   maxReconnect: 10,
   reconnectDelayMs: 20000,
   statusUpdateIntervalMs: 25000,
-  loginStaggerMs: 25000,
-  chatStaggerMs: 1000,
-  errorNotifyCooldownMs: 60000,
 }
 
+const COMMANDS = new Set(['sini1', 'info1', 'stop1', 'lanjut1', 'ikut1'])
 const AVOID_FOOD = new Set([
   'pufferfish', 'spider_eye', 'rotten_flesh', 'poisonous_potato', 'chicken',
   'suspicious_stew', 'golden_apple', 'enchanted_golden_apple', 'chorus_fruit',
@@ -50,27 +38,22 @@ const AVOID_FOOD = new Set([
 ])
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const botStates = new Map() // username (lowercase) -> botState
 
 function withTimeout(promise, ms) {
-  let t
   return Promise.race([
     promise,
-    new Promise((_, reject) => { t = setTimeout(() => reject(new Error('timeout')), ms) }),
-  ]).finally(() => clearTimeout(t))
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ])
 }
 
-// ====== DISCORD WEBHOOK ======
 function sendOrEditDiscord(message, messageId = null) {
   return new Promise((resolve) => {
-    if (!DISCORD_WEBHOOK_URL) return resolve({ id: null })
+    if (!DISCORD_WEBHOOK_URL) return resolve(null)
     try {
       const isEdit = Boolean(messageId)
-      const target = isEdit
-        ? `${DISCORD_WEBHOOK_URL}/messages/${messageId}`
-        : `${DISCORD_WEBHOOK_URL}?wait=true`
-      const url = new URL(target)
-      const data = JSON.stringify({ content: message, allowed_mentions: { parse: [] } })
+      const targetUrl = isEdit ? `${DISCORD_WEBHOOK_URL}/messages/${messageId}` : `${DISCORD_WEBHOOK_URL}?wait=true`
+      const url = new URL(targetUrl)
+      const data = JSON.stringify({ content: message })
 
       const req = https.request({
         hostname: url.hostname,
@@ -82,75 +65,173 @@ function sendOrEditDiscord(message, messageId = null) {
         },
       })
 
-      req.setTimeout(10000, () => req.destroy())
-
       req.on('response', (res) => {
         let body = ''
         res.on('data', (chunk) => { body += chunk })
         res.on('end', () => {
-          // Pesan kartu terhapus -> reset supaya dibuat ulang
-          if (res.statusCode === 404) return resolve({ id: null })
-          let id = messageId
           try {
             const parsed = JSON.parse(body)
-            if (parsed && parsed.id) id = parsed.id
-          } catch {}
-          resolve({ id })
+            resolve(parsed.id || messageId)
+          } catch (e) {
+            resolve(messageId)
+          }
         })
       })
 
-      req.on('error', () => resolve({ id: messageId }))
+      req.on('error', () => resolve(messageId))
       req.write(data)
       req.end()
-    } catch {
-      resolve({ id: messageId })
+    } catch (e) {
+      resolve(messageId)
     }
   })
 }
 
 function sendDiscordEvent(username, text) {
-  console.log(`[${username}] ${text}`)
-  sendOrEditDiscord(`**[${username}]** ${text}`).catch(() => {})
+  const fullMessage = `**[${username}]**${text}`
+  console.log(`[${username}]${text}`)
+  sendOrEditDiscord(fullMessage).catch(() => {})
 }
 
-// ====== STATE HELPERS ======
-const isAlive = (s, b) => s.bot === b && !s.ended && !s.shuttingDown
-const isOnline = (s) => Boolean(s.bot && s.bot.entity && !s.ended && !s.shuttingDown)
+const active = (botState) => botState.bot && !botState.shuttingDown
+const idle = (botState) => botState.state.paused || botState.state.following
 
-function generateStatusMessage(s) {
-  const b = s.bot
-  const mode = s.state.paused ? '⏸️ Menunggu' : '🎣 Memancing'
-  const hp = b ? Math.round(b.health || 0) : 0
-  const food = b ? Math.round(b.food || 0) : 0
+function tell(botState, text) {
+  console.log(`[${botState.username}][balas]`, text)
+  try { botState.bot.chat(`/msg ${CONFIG.owner}${text}`) } catch {}
+}
+
+async function dropRod(botState) {
+  try { await botState.bot.unequip('hand') } catch {}
+}
+
+function stopFollow(botState) {
+  botState.state.following = false
+  clearInterval(botState.followTimer)
+  botState.followTimer = null
+  try { botState.bot.pathfinder.setGoal(null) } catch {}
+}
+
+async function pauseWith(botState, reason) {
+  botState.state.paused = true
+  stopFollow(botState)
+  await dropRod(botState)
+  tell(botState, reason)
+  sendDiscordEvent(botState.username, `Berhenti: ${reason}`)
+}
+
+function generateStatusMessage(botState) {
+  const b = botState.bot
+  const mode = botState.state.following ? '🏃 Mengikuti' : botState.state.paused ? '⏸️ Berhenti' : '🎣 Memancing'
+  const hp = b ? Math.round(b.health) : 0
+  const food = b ? Math.round(b.food) : 0
   const emptySlots = b && b.inventory ? b.inventory.emptySlotCount() : 0
+  const lastCatchText = botState.stats.lastCatch ? botState.stats.lastCatch : 'Belum ada'
 
-  return `📊 **[${s.username}] LIVE STATUS**
+  return `📊 **[${botState.username}] LIVE STATUS**
 \`\`\`
-• Status         : ${mode}
-• Total Lemparan : ${s.stats.casts}
-• Total Didapat  : ${s.stats.catches}
-• Item Terakhir  : ${s.stats.lastCatch}
-• Darah / Food   : ❤️ ${hp}/20 | 🍖 ${food}/20
-• Slot Kosong    : ${emptySlots}
-• Makan          : ${s.stats.meals}x
+• Status        : ${mode}
+• Total Lemparan : ${botState.stats.casts}
+• Total Didapat  : ${botState.stats.catches}
+• Item Terakhir : ${lastCatchText}
+• Darah / Food  : ❤️ ${hp}/20 | 🍖 ${food}/20
+• Slot Kosong   : ${emptySlots}
+• Makan         : ${botState.stats.meals}x
 \`\`\`
-*(Update otomatis setiap ${Math.round(CONFIG.statusUpdateIntervalMs / 1000)} detik)*`
+*(Update otomatis setiap 25 detik)*`
 }
 
-async function updateDiscordStatusCard(s) {
-  if (!s.bot) return
-  const { id } = await sendOrEditDiscord(generateStatusMessage(s), s.discordMsgId)
-  s.discordMsgId = id
+async function updateDiscordStatusCard(botState) {
+  if (!botState.bot) return
+  const msgText = generateStatusMessage(botState)
+  const newMsgId = await sendOrEditDiscord(msgText, botState.discordMsgId)
+  if (newMsgId) {
+    botState.discordMsgId = newMsgId
+  }
 }
 
-function startDiscordCardLoop(s, b) {
-  if (s.statusInterval) clearInterval(s.statusInterval)
-  s.statusInterval = setInterval(() => {
-    if (isAlive(s, b)) updateDiscordStatusCard(s).catch(() => {})
+function startDiscordCardLoop(botState) {
+  if (botState.statusInterval) clearInterval(botState.statusInterval)
+  botState.statusInterval = setInterval(() => {
+    if (active(botState)) {
+      updateDiscordStatusCard(botState).catch(() => {})
+    }
   }, CONFIG.statusUpdateIntervalMs)
 }
 
-// ====== MAKAN ======
+function startFollow(botState) {
+  const b = botState.bot
+  const entity = b.players[CONFIG.owner] && b.players[CONFIG.owner].entity
+  if (!entity) {
+    tell(botState, 'Saya tidak melihat kamu. Kirim sini1 dulu.')
+    return
+  }
+  botState.state.paused = false
+  botState.state.following = true
+  dropRod(botState)
+  const movements = new Movements(b)
+  movements.canDig = false
+  movements.allow1by1towers = false
+  movements.allowSprinting = true
+  b.pathfinder.setMovements(movements)
+  b.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true)
+  clearInterval(botState.followTimer)
+  botState.followTimer = setInterval(() => {
+    if (!botState.state.following) return
+    const e = b.players[CONFIG.owner] && b.players[CONFIG.owner].entity
+    if (e) b.pathfinder.setGoal(new goals.GoalFollow(e, 2), true)
+  }, 3000)
+  tell(botState, 'Mengikuti kamu. Kirim stop1 untuk berhenti.')
+  sendDiscordEvent(botState.username, `Mulai mengikuti ${CONFIG.owner}`)
+}
+
+async function runCommand(botState, cmd) {
+  if (cmd === 'info1') {
+    tell(botState, `Status: ${botState.state.paused ? 'Berhenti' : 'Memancing'} | Lemparan: ${botState.stats.casts} \vert{} Didapat:${botState.stats.catches}`)
+  } else if (cmd === 'stop1') {
+    await pauseWith(botState, 'Berhenti manual. Kirim lanjut1 untuk memancing lagi.')
+  } else if (cmd === 'lanjut1') {
+    stopFollow(botState)
+    botState.state.paused = false
+    tell(botState, 'Melanjutkan memancing ke arah pandang saat ini.')
+    sendDiscordEvent(botState.username, 'Melanjutkan memancing')
+  } else if (cmd === 'ikut1') {
+    startFollow(botState)
+  } else if (cmd === 'sini1') {
+    botState.state.paused = true
+    stopFollow(botState)
+    await dropRod(botState)
+    botState.bot.chat(`/tpa ${CONFIG.owner}`)
+    await sleep(2000)
+    tell(botState, 'Sudah kirim /tpa, tolong /tpaccept. Setelah sampai kirim lanjut1 atau ikut1.')
+    sendDiscordEvent(botState.username, `Mengirim /tpa ke ${CONFIG.owner}`)
+  }
+}
+
+function handleChat(botState, raw) {
+  const msg = raw.replace(/§./g, '').trim()
+  if (msg.includes(CONFIG.owner)) console.log(`[${botState.username}][chat-owner]`, JSON.stringify(msg))
+  const m = msg.match(CONFIG.chatRegex)
+  if (!m) return
+  const cmd = m[1].toLowerCase()
+  if (!COMMANDS.has(cmd)) return
+  const now = Date.now()
+  if (cmd === botState.lastCmd.name && now - botState.lastCmd.t < 2000) return
+  botState.lastCmd.name = cmd
+  botState.lastCmd.t = now
+  sendDiscordEvent(botState.username, `Menerima perintah dari ${CONFIG.owner}: \`${cmd}\``)
+  runCommand(botState, cmd).catch((e) => console.log(`[${botState.username}] Gagal perintah:`, e.message))
+}
+
+async function dismissMenu(b) {
+  for (let i = 0; i < 3; i++) {
+    if (b.currentWindow) {
+      try { b.closeWindow(b.currentWindow) } catch {}
+    }
+    await sleep(1000)
+  }
+}
+
 function pickFood(b) {
   let best = null
   for (const item of b.inventory.items()) {
@@ -161,456 +242,280 @@ function pickFood(b) {
   return best ? best.item : null
 }
 
-async function eat(s, b) {
-  console.log(`[${s.username}] Lapar (food ${b.food}/20), mulai makan...`)
-  for (let i = 0; i < 12 && isAlive(s, b) && !s.state.paused && b.food < CONFIG.eatUntil; i++) {
+async function eat(botState) {
+  const b = botState.bot
+  console.log(`[${botState.username}] Lapar (food ${b.food}/20), mulai makan...`)
+  for (let i = 0; i < 12 && active(botState) && !idle(botState) && b.food < CONFIG.eatUntil; i++) {
     const item = pickFood(b)
     if (!item) return
     try {
       await b.equip(item, 'hand')
       await withTimeout(b.consume(), 8000)
-      s.stats.meals++
-    } catch {
+      botState.stats.meals++
+    } catch (e) {
       await sleep(1500)
     }
   }
 }
 
-// ====== MEMANCING ======
 async function ensureRod(b) {
   const rod = b.inventory.items().find((i) => i.name === 'fishing_rod')
   if (!rod) return false
-  if (!b.heldItem || b.heldItem.name !== 'fishing_rod') await b.equip(rod, 'hand')
+  if (!b.heldItem || b.heldItem.name !== 'fishing_rod') {
+    await b.equip(rod, 'hand')
+  }
   return true
 }
 
-function customFish(b) {
+function customFish(botState) {
   return new Promise((resolve, reject) => {
-    let bobberId = null
-    let settleAt = 0
-    let timer = null
-    let done = false
+    const b = botState.bot
+    let myBobberId = null
+    let fishTimeout = null
 
-    const isBobber = (e) => e && (e.name === 'fishing_bobber' || e.name === 'fishing_float' || e.entityType === 101)
-
-    const onSpawn = (entity) => {
-      if (bobberId || !isBobber(entity) || !b.entity) return
-      if (entity.position.distanceTo(b.entity.position) < 4) {
-        bobberId = entity.id
-        settleAt = Date.now() + CONFIG.bobberSettleMs // abaikan gerakan saat pelampung baru jatuh
+    const onEntitySpawn = (entity) => {
+      if (entity.name === 'fishing_bobber' || entity.entityType === 101) {
+        if (entity.position.distanceTo(b.entity.position) < 4) {
+          myBobberId = entity.id
+        }
       }
     }
 
-    const onUpdate = (entity) => {
-      if (!bobberId || entity.id !== bobberId || Date.now() < settleAt) return
-      const falling = entity.velocity && entity.velocity.y < -0.08
-      const biting = Array.isArray(entity.metadata) && entity.metadata.some((m) => m === true || m === 1)
-      if (falling || biting) finish(null, true)
+    const onEntityUpdate = (entity) => {
+      if (myBobberId && entity.id === myBobberId) {
+        const hasVelocityY = entity.velocity && entity.velocity.y < -0.08
+        const isBiting = entity.metadata && entity.metadata.some((m) => m === true || m === 1)
+
+        if (hasVelocityY || isBiting) {
+          cleanup()
+          b.activateItem()
+          resolve()
+        }
+      }
     }
 
-    const onGone = (entity) => {
-      if (bobberId && entity.id === bobberId) finish(new Error('bobber hilang'), false)
+    const cleanup = () => {
+      b.removeListener('entitySpawn', onEntitySpawn)
+      b.removeListener('entityUpdate', onEntityUpdate)
+      if (fishTimeout) clearTimeout(fishTimeout)
     }
 
-    const onEnd = () => finish(new Error('terputus'), false)
-
-    function cleanup() {
-      b.removeListener('entitySpawn', onSpawn)
-      b.removeListener('entityUpdate', onUpdate)
-      b.removeListener('entityVelocity', onUpdate)
-      b.removeListener('entityGone', onGone)
-      b.removeListener('end', onEnd)
-      if (timer) clearTimeout(timer)
-    }
-
-    function finish(err, reel) {
-      if (done) return
-      done = true
-      cleanup()
-      if (reel) { try { b.activateItem() } catch {} } // tarik pancingan
-      err ? reject(err) : resolve()
-    }
-
-    b.on('entitySpawn', onSpawn)
-    b.on('entityUpdate', onUpdate)
-    b.on('entityVelocity', onUpdate)
-    b.on('entityGone', onGone)
-    b.on('end', onEnd)
+    b.on('entitySpawn', onEntitySpawn)
+    b.on('entityUpdate', onEntityUpdate)
 
     try {
-      b.activateItem() // lempar
+      b.activateItem()
+      fishTimeout = setTimeout(() => {
+        cleanup()
+        try { b.activateItem() } catch {}
+        reject(new Error('timeout'))
+      }, CONFIG.castTimeoutMs)
     } catch (err) {
-      return finish(err, false)
+      cleanup()
+      return reject(err)
     }
-
-    timer = setTimeout(() => {
-      // Tarik pancingan hanya jika pelampung memang ada, agar tidak melempar dua kali
-      finish(new Error('timeout'), Boolean(bobberId))
-    }, CONFIG.castTimeoutMs)
   })
 }
 
+// Format Angka Romawi untuk Level Enchantment
 function toRoman(num) {
   const roman = { M: 1000, CM: 900, D: 500, CD: 400, C: 100, XC: 90, L: 50, XL: 40, X: 10, IX: 9, V: 5, IV: 4, I: 1 }
   let str = ''
-  for (const key in roman) {
-    while (num >= roman[key]) {
-      str += key
-      num -= roman[key]
+  for (let i in roman) {
+    while (num >= roman[i]) {
+      str += i
+      num -= roman[i]
     }
   }
-  return str || String(num)
+  return str || num
 }
 
+// Merapikan Nama Enchantment
 function formatEnchantName(name) {
-  return String(name)
+  return name
     .replace(/^minecraft:/, '')
     .split('_')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
 }
 
-function trackCatches(s, b) {
+async function fishLoop(botState) {
+  const b = botState.bot
+  console.log(`[${botState.username}] Siap memancing!`)
+
+  // Deteksi item yang ditangkap beserta Enchantment-nya
   b.on('playerCollect', (collector, collected) => {
-    if (collector !== b.entity) return
-    try {
-      const rawItem = collected.metadata.find((m) => m && m.itemId)
-      if (!rawItem) return
-      const itemObj = b.registry.items[rawItem.itemId]
-      if (!itemObj) return
+    if (collector === b.entity) {
+      try {
+        const rawItem = collected.metadata.find((m) => m && m.itemId)
+        if (rawItem) {
+          const itemObj = b.registry.items[rawItem.itemId]
+          if (itemObj) {
+            let name = itemObj.displayName || itemObj.name
+            let enchants = []
 
-      const name = itemObj.displayName || itemObj.name
-      let enchants = []
+            // Ekstrak data NBT Enchantment
+            if (rawItem.nbtData && rawItem.nbtData.value) {
+              const nbt = rawItem.nbtData.value
+              const enchantList = nbt.Enchantments || nbt.StoredEnchantments
 
-      if (rawItem.nbtData && rawItem.nbtData.value) {
-        const nbt = rawItem.nbtData.value
-        const list = nbt.Enchantments || nbt.StoredEnchantments
-        if (list && list.value && list.value.value) {
-          enchants = list.value.value.map((e) => {
-            const eName = formatEnchantName(e.id ? e.id.value : 'unknown')
-            const eLvl = e.lvl ? e.lvl.value : 1
-            return `${eName} ${toRoman(eLvl)}`
-          })
+              if (enchantList && enchantList.value && enchantList.value.value) {
+                enchants = enchantList.value.value.map((e) => {
+                  const eName = formatEnchantName(e.id ? e.id.value : 'unknown')
+                  const eLvl = e.lvl ? e.lvl.value : 1
+                  return `${eName} ${toRoman(eLvl)}`
+                })
+              }
+            }
+
+            if (enchants.length > 0) {
+              botState.stats.lastCatch = `${name} ✨ (${enchants.join(', ')})`
+            } else {
+              botState.stats.lastCatch = name
+            }
+          }
         }
-      }
-
-      s.stats.lastCatch = enchants.length ? `${name} ✨ (${enchants.join(', ')})` : name
-    } catch {}
+      } catch (e) {}
+    }
   })
-}
 
-async function fishLoop(s, b) {
-  console.log(`[${s.username}] Siap memancing!`)
-  let fullNotified = false
-  let noRodNotified = false
-
-  while (isAlive(s, b)) {
-    if (s.state.paused) {
+  while (active(botState)) {
+    if (idle(botState)) {
       await sleep(500)
       continue
     }
 
     let hasRod = false
-    try { hasRod = await ensureRod(b) } catch {}
+    try {
+      hasRod = await ensureRod(b)
+    } catch (e) {}
+
     if (!hasRod) {
-      if (!noRodNotified) {
-        noRodNotified = true
-        sendDiscordEvent(s.username, '🎣 Fishing rod tidak ditemukan di inventori.')
-      }
       await sleep(3000)
       continue
     }
-    noRodNotified = false
 
     if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
-      await eat(s, b)
+      await eat(botState)
       continue
     }
 
     if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
-      if (!fullNotified) {
-        fullNotified = true
-        sendDiscordEvent(s.username, `🎒 Inventori penuh. Lemparan: ${s.stats.casts} | Didapat: ${s.stats.catches}`)
-      }
-      await sleep(10000) // lanjut otomatis begitu ada slot kosong
+      await pauseWith(botState, `Inventori penuh. Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
       continue
     }
-    fullNotified = false
 
-    s.stats.casts++
+    botState.stats.casts++
     try {
-      await customFish(b)
-      s.stats.catches++
-      s.reconnects = 0
-      console.log(`[${s.username}] Berhasil! Lemparan: ${s.stats.casts} | Didapat: ${s.stats.catches}`)
+      await customFish(botState)
+      botState.stats.catches++
+      botState.reconnects = 0
+      console.log(`[${botState.username}] Berhasil! Lemparan: ${botState.stats.casts} | Didapat: ${botState.stats.catches}`)
     } catch (e) {
-      await sleep(e.message === 'timeout' ? 1500 : 2000)
+      if (idle(botState)) {
+      } else if (e.message === 'timeout') {
+        await sleep(1500)
+      } else {
+        await sleep(2000)
+      }
     }
 
     await sleep(1000)
   }
 }
 
-// ====== CHAT DARI DISCORD ======
-function sanitizeChat(text) {
-  return String(text)
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/§./g, '')
-    .trim()
-    .slice(0, 256)
-}
-
-function isAuthorized(interaction) {
-  if (ALLOWED_USER_IDS.length > 0) return ALLOWED_USER_IDS.includes(interaction.user.id)
-  return Boolean(interaction.memberPermissions && interaction.memberPermissions.has('Administrator'))
-}
-
-async function startDiscordBot() {
-  if (!DISCORD_BOT_TOKEN) {
-    console.log('[discord] DISCORD_BOT_TOKEN kosong, fitur /chat dinonaktifkan.')
-    return
-  }
-
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] })
-
-  const chatCommand = new SlashCommandBuilder()
-    .setName('chat')
-    .setDescription('Kirim chat atau command Minecraft lewat bot')
-    .addStringOption((o) => o
-      .setName('bot')
-      .setDescription('Nama bot, atau "semua"')
-      .setRequired(true)
-      .setAutocomplete(true))
-    .addStringOption((o) => o
-      .setName('pesan')
-      .setDescription('Isi chat, atau command diawali / (contoh: /tpa)')
-      .setRequired(true)
-      .setMaxLength(256))
-
-  client.once(Events.ClientReady, async (c) => {
-    try {
-      await c.application.commands.set([chatCommand.toJSON()], DISCORD_GUILD_ID || undefined)
-      console.log(`[discord] Login sebagai ${c.user.tag}, command /chat terdaftar.`)
-    } catch (e) {
-      console.log('[discord] Gagal mendaftarkan command:', e.message)
-    }
-  })
-
-  client.on(Events.InteractionCreate, async (interaction) => {
-    try {
-      if (interaction.isAutocomplete()) {
-        if (interaction.commandName !== 'chat') return
-        const q = String(interaction.options.getFocused() || '').toLowerCase()
-        const names = ['semua', ...ACCOUNTS.map((a) => a.username)]
-        await interaction.respond(
-          names.filter((n) => n.toLowerCase().includes(q)).slice(0, 25).map((n) => ({ name: n, value: n }))
-        )
-        return
-      }
-
-      if (!interaction.isChatInputCommand() || interaction.commandName !== 'chat') return
-
-      if (!isAuthorized(interaction)) {
-        await interaction.reply({ content: '⛔ Kamu tidak punya izin memakai /chat.', flags: MessageFlags.Ephemeral })
-        return
-      }
-
-      const target = interaction.options.getString('bot', true).trim().toLowerCase()
-      const text = sanitizeChat(interaction.options.getString('pesan', true))
-      if (!text) {
-        await interaction.reply({ content: '⚠️ Pesan kosong.', flags: MessageFlags.Ephemeral })
-        return
-      }
-
-      let targets
-      if (target === 'semua') {
-        targets = [...botStates.values()].filter(isOnline)
-      } else {
-        const s = botStates.get(target)
-        if (!s) {
-          await interaction.reply({ content: `⚠️ Bot "${target}" tidak ditemukan.`, flags: MessageFlags.Ephemeral })
-          return
-        }
-        if (!isOnline(s)) {
-          await interaction.reply({ content: `⚠️ ${s.username} sedang offline.`, flags: MessageFlags.Ephemeral })
-          return
-        }
-        targets = [s]
-      }
-
-      if (targets.length === 0) {
-        await interaction.reply({ content: '⚠️ Tidak ada bot yang online.', flags: MessageFlags.Ephemeral })
-        return
-      }
-
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-
-      const sent = []
-      for (let i = 0; i < targets.length; i++) {
-        const s = targets[i]
-        if (!isOnline(s)) continue
-        try {
-          s.bot.chat(text)
-          sent.push(s.username)
-          sendDiscordEvent(s.username, `💬 ${interaction.user.tag} mengirim: \`${text.replace(/`/g, "'")}\``)
-        } catch (e) {
-          console.log(`[${s.username}] Gagal chat:`, e.message)
-        }
-        if (i < targets.length - 1) await sleep(CONFIG.chatStaggerMs)
-      }
-
-      await interaction.editReply(
-        sent.length
-          ? `✅ Terkirim lewat ${sent.join(', ')}: \`${text.replace(/`/g, "'")}\``
-          : '⚠️ Gagal mengirim pesan.'
-      )
-    } catch (e) {
-      console.log('[discord] Error interaksi:', e.message)
-      try {
-        if (interaction.deferred || interaction.replied) await interaction.editReply('⚠️ Terjadi error.')
-        else if (interaction.isRepliable()) await interaction.reply({ content: '⚠️ Terjadi error.', flags: MessageFlags.Ephemeral })
-      } catch {}
-    }
-  })
-
-  client.on('error', (e) => console.log('[discord] Error:', e.message))
-  await client.login(DISCORD_BOT_TOKEN)
-}
-
-// ====== BOT MINECRAFT ======
 function createBotAccount(acc, delayMs) {
-  const s = {
-    username: acc.username,
-    password: acc.password,
-    bot: null,
-    ended: true,
-    shuttingDown: false,
-    reconnects: 0,
-    discordMsgId: null,
-    statusInterval: null,
-    stats: { casts: 0, catches: 0, meals: 0, lastCatch: 'Belum ada' },
-    state: { paused: false, dead: false },
-  }
-  botStates.set(acc.username.toLowerCase(), s)
+  setTimeout(() => {
+    const botState = {
+      username: acc.username,
+      password: acc.password,
+      bot: null,
+      shuttingDown: false,
+      reconnects: 0,
+      followTimer: null,
+      discordMsgId: null,
+      statusInterval: null,
+      stats: { casts: 0, catches: 0, meals: 0, lastCatch: 'Belum ada' },
+      state: { paused: false, following: false },
+      lastCmd: { name: '', t: 0 }
+    }
 
-  function connect() {
-    if (s.shuttingDown) return
-    sendDiscordEvent(s.username, `Menghubungkan ke ${CONFIG.host} (versi ${CONFIG.version})...`)
+    function connect() {
+      sendDiscordEvent(botState.username, `Menghubungkan ke ${CONFIG.host}...`)
+      
+      const b = mineflayer.createBot({
+        host: CONFIG.host,
+        port: CONFIG.port,
+        username: botState.username,
+        auth: CONFIG.auth,
+      })
 
-    const b = mineflayer.createBot({
-      host: CONFIG.host,
-      port: CONFIG.port,
-      username: s.username,
-      auth: CONFIG.auth,
-      ...(CONFIG.version ? { version: CONFIG.version } : {}),
-    })
+      botState.bot = b
+      b.loadPlugin(pathfinder)
+      botState.state.paused = false
+      botState.state.following = false
+      let authSent = false
 
-    s.bot = b
-    s.ended = false
-    s.state.paused = false
-    s.state.dead = false
-
-    let authSent = false
-    let firstSpawn = true
-    let lastErrAt = 0
-
-    b.on('messagestr', (msg) => {
-      if (authSent) return
-      if (/\/register/i.test(msg)) {
-        authSent = true
-        b.chat(`/register ${s.password} ${s.password}`)
-      } else if (/\/login/i.test(msg)) {
-        authSent = true
-        b.chat(`/login ${s.password}`)
-      }
-    })
-
-    b.on('error', (e) => {
-      console.log(`[${s.username}] Error: ${e.message}`)
-      // Batasi notifikasi agar webhook tidak kebanjiran
-      if (Date.now() - lastErrAt > CONFIG.errorNotifyCooldownMs) {
-        lastErrAt = Date.now()
-        sendOrEditDiscord(`**[${s.username}]** ⚠️ Error: ${e.message}`).catch(() => {})
-      }
-    })
-
-    b.on('kicked', (r) => sendDiscordEvent(s.username, `❌ Kicked: ${typeof r === 'string' ? r : JSON.stringify(r)}`))
-
-    b.on('death', () => {
-      s.state.dead = true
-      s.state.paused = true
-      sendDiscordEvent(s.username, '💀 Bot mati, menunggu respawn...')
-    })
-
-    b.once('end', () => {
-      s.ended = true
-      if (s.statusInterval) clearInterval(s.statusInterval)
-      sendDiscordEvent(s.username, `🔌 Terputus. Total didapat: ${s.stats.catches}`)
-      if (s.shuttingDown) return
-      s.reconnects++
-      if (s.reconnects <= CONFIG.maxReconnect) {
-        setTimeout(connect, CONFIG.reconnectDelayMs)
-      } else {
-        sendDiscordEvent(s.username, '🛑 Batas reconnect tercapai, bot berhenti.')
-      }
-    })
-
-    trackCatches(s, b)
-
-    b.on('spawn', async () => {
-      try {
-        if (firstSpawn) {
-          firstSpawn = false
-          sendDiscordEvent(s.username, '✅ Berhasil masuk ke server!')
-          for (let i = 0; i < 30 && !authSent && isAlive(s, b); i++) await sleep(500)
-          await sleep(CONFIG.afterLoginWaitMs)
-          if (!isAlive(s, b)) return
-
-          // tutup menu/GUI yang mungkin terbuka setelah login
-          for (let i = 0; i < 3 && isAlive(s, b); i++) {
-            if (b.currentWindow) { try { b.closeWindow(b.currentWindow) } catch {} }
-            await sleep(1000)
+      b.on('messagestr', (msg) => {
+        if (!authSent) {
+          if (/\/register/i.test(msg)) {
+            authSent = true
+            b.chat(`/register ${botState.password} ${botState.password}`)
+          } else if (/\/login/i.test(msg)) {
+            authSent = true
+            b.chat(`/login ${botState.password}`)
           }
-          if (!isAlive(s, b)) return
-
-          await updateDiscordStatusCard(s)
-          startDiscordCardLoop(s, b)
-          fishLoop(s, b).catch((e) => console.log(`[${s.username}] ERROR loop:`, e.message))
-          return
         }
+        handleChat(botState, msg)
+      })
 
-        // spawn berikutnya: hanya tangani respawn setelah mati
-        if (!s.state.dead) return
-        s.state.dead = false
-        sendDiscordEvent(s.username, '🔄 Respawn, mengirim /back...')
+      b.on('error', (e) => sendDiscordEvent(botState.username, `⚠️ Error: ${e.message}`))
+      b.on('kicked', (r) => sendDiscordEvent(botState.username, `❌ Kicked: ${JSON.stringify(r)}`))
+      b.on('death', () => {
+        sendDiscordEvent(botState.username, '💀 Bot Mati, bersiap untuk respawn...')
+        botState.state.paused = true
+        stopFollow(botState)
+      })
+
+      b.on('respawn', async () => {
+        sendDiscordEvent(botState.username, '🔄 Respawned. Mengirim /back...')
         await sleep(3000)
-        if (!isAlive(s, b)) return
-        b.chat('/back')
-        await sleep(2000)
-        s.state.paused = false
-      } catch (e) {
-        console.log(`[${s.username}] Error spawn:`, e.message)
-        s.state.paused = false
-      }
-    })
-  }
+        if (active(botState)) {
+          b.chat('/back')
+          await sleep(2000)
+          botState.state.paused = false
+        }
+      })
 
-  setTimeout(connect, delayMs)
+      b.once('end', () => {
+        if (botState.statusInterval) clearInterval(botState.statusInterval)
+        sendDiscordEvent(botState.username, `🔌 Terputus. Total Didapat: ${botState.stats.catches}`)
+        if (!botState.shuttingDown) {
+          botState.reconnects++
+          if (botState.reconnects <= CONFIG.maxReconnect) {
+            setTimeout(connect, CONFIG.reconnectDelayMs)
+          }
+        }
+      })
+
+      b.once('spawn', async () => {
+        sendDiscordEvent(botState.username, '✅ Berhasil masuk ke server!')
+        for (let i = 0; i < 30 && !authSent; i++) await sleep(500)
+        await sleep(CONFIG.afterLoginWaitMs)
+        await dismissMenu(b)
+        
+        await updateDiscordStatusCard(botState)
+        startDiscordCardLoop(botState)
+
+        fishLoop(botState).catch((e) => console.log(`[${botState.username}] ERROR loop:`, e.message))
+      })
+    }
+
+    connect()
+  }, delayMs)
 }
 
-// ====== START ======
-ACCOUNTS.forEach((acc, index) => createBotAccount(acc, index * CONFIG.loginStaggerMs))
-
-startDiscordBot().catch((e) => console.log('[discord] Gagal start:', e.message))
-
-process.on('SIGINT', () => {
-  for (const s of botStates.values()) {
-    s.shuttingDown = true
-    try { s.bot && s.bot.quit() } catch {}
-  }
-  setTimeout(() => process.exit(0), 1000)
+// JEDA LOGIN: 25 DETIK PER BOT
+ACCOUNTS.forEach((acc, index) => {
+  createBotAccount(acc, index * 25000)
 })
-
-// Cegah proses mati karena error dari library (contoh: "unknown chat format code")
-process.on('uncaughtException', (e) => console.log('[uncaughtException]', e && e.message ? e.message : e))
-process.on('unhandledRejection', (e) => console.log('[unhandledRejection]', e && e.message ? e.message : e))
