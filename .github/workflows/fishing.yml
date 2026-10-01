@@ -1,31 +1,42 @@
-name: Run Minecraft AFK Bot
+name: Auto fishing
 
 on:
   workflow_dispatch:
     inputs:
-      bot_username:
-        description: 'Username Akun Minecraft'
+      username:
+        description: Username bot
         required: true
-        default: 'Solaris'
-      bot_password:
-        description: 'Password Akun Minecraft'
+        default: BOTMARKET
+      password:
+        description: Password bot
         required: true
-        default: 'memek#1'
+      report_to:
+        description: Kirim laporan lewat /msg ke pemain ini (kosongkan jika tidak perlu)
+        required: false
+        default: SolTheMayo
+
+concurrency:
+  group: auto-fishing
+  cancel-in-progress: true
 
 jobs:
-  run-bot:
+  fish:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Run Bot
-        run: node fishing.js "${{ github.event.inputs.bot_username }}" "${{ github.event.inputs.bot_password }}"
+          node-version: 22
+      - name: Sembunyikan password di log
+        env:
+          MC_PASS: ${{ inputs.password }}
+        run: echo "::add-mask::$MC_PASS"
+      - name: Install dependency
+        run: npm install --no-audit --no-fund
+      - name: Jalankan bot
+        env:
+          MC_USER: ${{ inputs.username }}
+          MC_PASS: ${{ inputs.password }}
+          REPORT_TO: ${{ inputs.report_to }}
+        run: node fishing.js
