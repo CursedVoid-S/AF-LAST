@@ -6,7 +6,6 @@ const CONFIG = {
   port: 25565,
   username: (process.env.MC_USER || '').trim(),
   password: process.env.MC_PASS || '',
-  reportTo: (process.env.REPORT_TO || '').trim(),
   auth: 'offline',
   eatBelow: 6,
   eatUntil: 18,
@@ -27,7 +26,6 @@ if (!/^[A-Za-z0-9_]{3,16}$/.test(CONFIG.username) || !CONFIG.password) {
   console.log('Username (3-16 huruf/angka/_) dan password wajib diisi (MC_USER dan MC_PASS).')
   process.exit(1)
 }
-if (!/^[A-Za-z0-9_.]{1,17}$/.test(CONFIG.reportTo)) CONFIG.reportTo = ''
 
 const AVOID_FOOD = new Set([
   'pufferfish', 'spider_eye', 'rotten_flesh', 'poisonous_potato', 'chicken',
@@ -53,10 +51,8 @@ function withTimeout(promise, ms) {
   ])
 }
 
-function report(b, text) {
+function report(text) {
   console.log('[laporan]', text)
-  if (!CONFIG.reportTo) return
-  try { b.chat(`/msg ${CONFIG.reportTo} ${text}`) } catch {}
 }
 
 function shutdown(code) {
@@ -67,10 +63,16 @@ function shutdown(code) {
   setTimeout(() => process.exit(code), 500)
 }
 
-process.on('SIGINT', () => shutdown(0))
-process.on('SIGTERM', () => shutdown(0))
+const onStopSignal = () => {
+  if (shuttingDown) return
+  report(`Bot dihentikan. ${statsText()}.`)
+  shutdown(0)
+}
+process.on('SIGINT', onStopSignal)
+process.on('SIGTERM', onStopSignal)
 process.on('uncaughtException', (e) => {
   console.log('CRASH:', e && e.stack ? e.stack : e)
+  report(`Bot crash: ${e && e.message ? e.message : e}`)
   shutdown(1)
 })
 
@@ -195,9 +197,9 @@ async function recover(b) {
     console.log('Belum kembali ke spot memancing')
   }
   if (!active(b)) return
-  report(b, `Mati ke-${stats.deaths}. ${statsText()}.`)
+  report(`Mati ke-${stats.deaths}. ${statsText()}.`)
   if (!ok) {
-    report(b, 'Gagal kembali ke spot memancing, berhenti.')
+    report('Gagal kembali ke spot memancing, berhenti.')
     return shutdown(1)
   }
   state.needFace = false
@@ -208,6 +210,7 @@ async function recover(b) {
 
 async function fishLoop(b) {
   console.log('Mulai auto fishing')
+  report('Online dan mulai memancing.')
   let timeoutsInRow = 0
   while (active(b)) {
     if (state.dead || state.recovering) {
@@ -216,7 +219,7 @@ async function fishLoop(b) {
     }
     if (state.needFace) {
       if (!(await faceWater(b))) {
-        report(b, 'Tidak ada air dalam jangkauan di posisi bot, berhenti memancing.')
+        report('Tidak ada air dalam jangkauan di posisi bot, berhenti memancing.')
         return shutdown(1)
       }
       state.needFace = false
@@ -227,7 +230,7 @@ async function fishLoop(b) {
       continue
     }
     if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
-      report(b, `Inventori penuh, berhenti. ${statsText()}.`)
+      report(`Inventori penuh, berhenti. ${statsText()}.`)
       return shutdown(0)
     }
     let hasRod = false
@@ -238,7 +241,7 @@ async function fishLoop(b) {
     }
     if (!hasRod) {
       if (state.dead || state.recovering) continue
-      report(b, `Tidak ada fishing rod, berhenti. ${statsText()}.`)
+      report(`Tidak ada fishing rod, berhenti. ${statsText()}.`)
       return shutdown(1)
     }
 
@@ -257,7 +260,7 @@ async function fishLoop(b) {
         await sleep(1500)
         if (timeoutsInRow === 5) state.needFace = true
         if (timeoutsInRow >= CONFIG.maxTimeoutsInRow) {
-          report(b, `Terlalu sering tidak ada gigitan, berhenti. ${statsText()}.`)
+          report(`Terlalu sering tidak ada gigitan, berhenti. ${statsText()}.`)
           return shutdown(1)
         }
       } else {
