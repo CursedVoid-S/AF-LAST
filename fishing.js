@@ -13,6 +13,7 @@ const CONFIG = {
   startCommands: [],
   backRetries: 3,
   backWaitMs: 8000,
+  aimAtWater: false,
   waterMin: 2,
   waterMax: 32,
   castTimeoutMs: 45000,
@@ -78,42 +79,6 @@ process.on('uncaughtException', (e) => {
 
 const active = (b) => b === bot && !shuttingDown
 
-async function wiggle(b) {
-  if (moving) return
-  moving = true
-  console.log('Bergerak supaya chat tidak diblokir anti-spambot')
-  try {
-    const start = b.entity.position.clone()
-    const movements = new Movements(b)
-    movements.canDig = false
-    movements.allow1by1towers = false
-    b.pathfinder.setMovements(movements)
-    const offsets = [[5, 0], [-5, 0], [0, 5], [0, -5]]
-    let moved = false
-    for (const [dx, dz] of offsets) {
-      try {
-        await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(start.x + dx, start.z + dz, 1)), 8000)
-      } catch {
-        try { b.pathfinder.setGoal(null) } catch {}
-      }
-      if (b.entity.position.distanceTo(start) >= 3) {
-        moved = true
-        break
-      }
-    }
-    if (!moved) {
-      console.log('Pathfinder gagal, bergerak lurus')
-      b.setControlState('forward', true)
-      await sleep(1200)
-      b.setControlState('forward', false)
-    }
-    console.log(`Bot bergeser ${b.entity.position.distanceTo(start).toFixed(1)} blok`)
-  } catch (e) {
-    console.log('Gagal bergerak:', e.message)
-  }
-  try { b.clearControlStates() } catch {}
-  moving = false
-}
 
 async function dismissMenu(b) {
   for (let i = 0; i < 3; i++) {
@@ -190,7 +155,7 @@ async function recover(b) {
     b.chat('/back')
     await sleep(CONFIG.backWaitMs)
     const moved = from && b.entity ? b.entity.position.distanceTo(from) > 3 : true
-    if (moved && (await faceWater(b))) {
+    if (moved && (!CONFIG.aimAtWater || (await faceWater(b)))) {
       ok = true
       break
     }
@@ -218,7 +183,7 @@ async function fishLoop(b) {
       continue
     }
     if (state.needFace) {
-      if (!(await faceWater(b))) {
+      if (CONFIG.aimAtWater && !(await faceWater(b))) {
         report('Tidak ada air dalam jangkauan di posisi bot, berhenti memancing.')
         return shutdown(1)
       }
@@ -301,7 +266,7 @@ function start() {
   let authSent = false
 
   b.on('messagestr', (msg) => {
-    if (/have to move/i.test(msg)) wiggle(b)
+    if (/have to move/i.test(msg) && state.recovering) wiggle(b)
     if (/login|register|password|afk|kick|cooldown/i.test(msg)) console.log('[chat]', msg)
     if (authSent) return
     if (/\/register/i.test(msg)) {
@@ -334,7 +299,6 @@ function start() {
     console.log(`Menunggu ${CONFIG.afterLoginWaitMs / 1000} detik setelah login`)
     await sleep(CONFIG.afterLoginWaitMs)
     await dismissMenu(b)
-    await wiggle(b)
     for (const cmd of CONFIG.startCommands) {
       b.chat(cmd)
       await sleep(3000)
