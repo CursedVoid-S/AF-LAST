@@ -1,12 +1,18 @@
+
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const https = require('https')
+const { URL } = require('url')
+
+// URL DISCORD WEBHOOK
+const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1555117262136938526/4QwH449Ji2rLzAtGk0scAwkesLUWeHRXcsQ5BW_R3dYoB2e4jEtdyceA4MvywJIsjt7U'
 
 // Daftar 4 Akun
 const ACCOUNTS = [
-  { username: 'Solaris', password: 'memek#1' },
+  //{ username: 'Solaris', password: 'memek#1' },//
   { username: 'Izanagi', password: 'memek#1' },
   { username: 'Izanami', password: 'memek#1' },
-  //{ username: 'Itadori', password: 'memek#1' },//
+  { username: 'Itadori', password: 'memek#1' },
 ]
 
 const CONFIG = {
@@ -19,7 +25,7 @@ const CONFIG = {
   eatUntil: 18,
   afterLoginWaitMs: 5000,
   castTimeoutMs: 40000,
-  stopWhenFull: true,
+  stopWhenFull: false, // Membiarkan item terlempar ke Hopper jika inventori penuh
   maxReconnect: 10,
   reconnectDelayMs: 20000,
 }
@@ -40,12 +46,40 @@ function withTimeout(promise, ms) {
   ])
 }
 
+// Fungsi Mengirim Pesan ke Discord Webhook
+function sendDiscord(message) {
+  if (!DISCORD_WEBHOOK_URL) return
+  try {
+    const url = new URL(DISCORD_WEBHOOK_URL)
+    const data = JSON.stringify({ content: message })
+
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    })
+    req.on('error', () => {})
+    req.write(data)
+    req.end()
+  } catch (e) {}
+}
+
+function logAndDiscord(username, text) {
+  const fullMessage = `[${username}]${text}`
+  console.log(fullMessage)
+  sendDiscord(`**[${username}]**${text}`)
+}
+
 const active = (botState) => botState.bot && !botState.shuttingDown
 const idle = (botState) => botState.state.paused || botState.state.following
 
 function tell(botState, text) {
   console.log(`[${botState.username}][balas]`, text)
-  try { botState.bot.chat(`/msg ${CONFIG.owner} ${text}`) } catch {}
+  try { botState.bot.chat(`/msg ${CONFIG.owner}${text}`) } catch {}
 }
 
 async function dropRod(botState) {
@@ -64,13 +98,14 @@ async function pauseWith(botState, reason) {
   stopFollow(botState)
   await dropRod(botState)
   tell(botState, reason)
+  logAndDiscord(botState.username, `Berhenti: ${reason}`)
 }
 
 function statusText(botState) {
   const b = botState.bot
   const mode = botState.state.following ? 'mengikuti' : botState.state.paused ? 'berhenti' : 'memancing'
   const p = b.entity.position
-  return `Status: ${mode} | Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches} | Makan: ${botState.stats.meals} | HP: ${Math.round(b.health)} | Slot Kosong: ${b.inventory.emptySlotCount()} | Pos: ${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+  return `Status: ${mode} | Total Lemparan: ${botState.stats.casts} \vert{} Total Didapat:${botState.stats.catches} | Makan: ${botState.stats.meals} \vert{} HP:${Math.round(b.health)} | Slot Kosong: ${b.inventory.emptySlotCount()} \vert{} Pos:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
 }
 
 function startFollow(botState) {
@@ -96,6 +131,7 @@ function startFollow(botState) {
     if (e) b.pathfinder.setGoal(new goals.GoalFollow(e, 2), true)
   }, 3000)
   tell(botState, 'Mengikuti kamu. Kirim stop1 untuk berhenti.')
+  logAndDiscord(botState.username, `Mulai mengikuti ${CONFIG.owner}`)
 }
 
 async function runCommand(botState, cmd) {
@@ -107,6 +143,7 @@ async function runCommand(botState, cmd) {
     stopFollow(botState)
     botState.state.paused = false
     tell(botState, 'Melanjutkan memancing ke arah pandang saat ini.')
+    logAndDiscord(botState.username, 'Melanjutkan memancing')
   } else if (cmd === 'ikut1') {
     startFollow(botState)
   } else if (cmd === 'sini1') {
@@ -116,6 +153,7 @@ async function runCommand(botState, cmd) {
     botState.bot.chat(`/tpa ${CONFIG.owner}`)
     await sleep(2000)
     tell(botState, 'Sudah kirim /tpa, tolong /tpaccept. Setelah sampai kirim lanjut1 atau ikut1.')
+    logAndDiscord(botState.username, `Mengirim /tpa ke ${CONFIG.owner}`)
   }
 }
 
@@ -130,7 +168,7 @@ function handleChat(botState, raw) {
   if (cmd === botState.lastCmd.name && now - botState.lastCmd.t < 2000) return
   botState.lastCmd.name = cmd
   botState.lastCmd.t = now
-  console.log(`[${botState.username}] Perintah dari ${CONFIG.owner}:`, cmd)
+  logAndDiscord(botState.username, `Menerima perintah dari ${CONFIG.owner}: \`${cmd}\``)
   runCommand(botState, cmd).catch((e) => console.log(`[${botState.username}] Gagal perintah:`, e.message))
 }
 
@@ -155,7 +193,7 @@ function pickFood(b) {
 
 async function eat(botState) {
   const b = botState.bot
-  console.log(`[${botState.username}] Lapar (food ${b.food}/20), mulai makan`)
+  logAndDiscord(botState.username, `Lapar (food ${b.food}/20), mulai makan...`)
   for (let i = 0; i < 12 && active(botState) && !idle(botState) && b.food < CONFIG.eatUntil; i++) {
     const item = pickFood(b)
     if (!item) return
@@ -178,7 +216,6 @@ async function ensureRod(b) {
   return true
 }
 
-// SISTEM MANCING SANGAT RESPONSIDF (LAMA)
 function customFish(botState) {
   return new Promise((resolve, reject) => {
     const b = botState.bot
@@ -231,7 +268,7 @@ function customFish(botState) {
 
 async function fishLoop(botState) {
   const b = botState.bot
-  console.log(`[${botState.username}] Siap memancing...`)
+  logAndDiscord(botState.username, 'Siap memancing!')
 
   while (active(botState)) {
     if (idle(botState)) {
@@ -264,7 +301,13 @@ async function fishLoop(botState) {
       await customFish(botState)
       botState.stats.catches++
       botState.reconnects = 0
-      console.log(`[${botState.username}] Berhasil! Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
+      
+      // Kirim laporan ke Discord setiap kelipatan 10 ikan
+      if (botState.stats.catches % 10 === 0) {
+        logAndDiscord(botState.username, `🎣 Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
+      } else {
+        console.log(`[${botState.username}] Berhasil! Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
+      }
     } catch (e) {
       if (idle(botState)) {
       } else if (e.message === 'timeout') {
@@ -293,7 +336,7 @@ function createBotAccount(acc, delayMs) {
     }
 
     function connect() {
-      console.log(`[${botState.username}] Menghubungkan ke ${CONFIG.host}...`)
+      logAndDiscord(botState.username, `Menghubungkan ke ${CONFIG.host}...`)
       
       const b = mineflayer.createBot({
         host: CONFIG.host,
@@ -321,27 +364,26 @@ function createBotAccount(acc, delayMs) {
         handleChat(botState, msg)
       })
 
-      b.on('error', (e) => console.log(`[${botState.username}] Error:`, e.message))
-      b.on('kicked', (r) => console.log(`[${botState.username}] Kicked:`, r))
+      b.on('error', (e) => logAndDiscord(botState.username, `⚠️ Error: ${e.message}`))
+      b.on('kicked', (r) => logAndDiscord(botState.username, `❌ Kicked: ${JSON.stringify(r)}`))
       b.on('death', () => {
-        console.log(`[${botState.username}] Mati, bersiap untuk respawn...`)
+        logAndDiscord(botState.username, '💀 Bot Mati, bersiap untuk respawn...')
         botState.state.paused = true
         stopFollow(botState)
       })
 
       b.on('respawn', async () => {
-        console.log(`[${botState.username}] Respawned. Menunggu 3 detik sebelum mengirim /back...`)
+        logAndDiscord(botState.username, '🔄 Respawned. Mengirim /back...')
         await sleep(3000)
         if (active(botState)) {
           b.chat('/back')
-          console.log(`[${botState.username}] Mengirim /back dan melanjutkan memancing.`)
           await sleep(2000)
           botState.state.paused = false
         }
       })
 
       b.once('end', () => {
-        console.log(`[${botState.username}] Terputus. Rekap Akhir -> Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
+        logAndDiscord(botState.username, `🔌 Terputus. Total Didapat: ${botState.stats.catches}`)
         if (!botState.shuttingDown) {
           botState.reconnects++
           if (botState.reconnects <= CONFIG.maxReconnect) {
@@ -351,7 +393,7 @@ function createBotAccount(acc, delayMs) {
       })
 
       b.once('spawn', async () => {
-        console.log(`[${botState.username}] Sudah masuk server`)
+        logAndDiscord(botState.username, '✅ Berhasil masuk ke server!')
         for (let i = 0; i < 30 && !authSent; i++) await sleep(500)
         await sleep(CONFIG.afterLoginWaitMs)
         await dismissMenu(b)
@@ -363,7 +405,7 @@ function createBotAccount(acc, delayMs) {
   }, delayMs)
 }
 
-// Jalankan ke-4 bot dengan jeda 5 detik antar login
+// JEDA LOGIN: 25 DETIK PER BOT
 ACCOUNTS.forEach((acc, index) => {
   createBotAccount(acc, index * 25000)
 })
