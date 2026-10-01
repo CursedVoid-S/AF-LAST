@@ -1,33 +1,30 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 
+// Daftar 4 Akun
+const ACCOUNTS = [
+  { username: 'Solaris', password: 'memek#1' },
+  { username: 'Izanagi', password: 'memek#1' },
+  { username: 'Izanami', password: 'memek#1' },
+  //{ username: 'Itadori', password: 'memek#1' },//
+]
+
 const CONFIG = {
-  host: process.env.MC_HOST || 'play.sunnysmp.xyz',
+  host: 'play.sunnysmp.xyz',
   port: 25565,
-  username: (process.env.MC_USER || '').trim(),
-  password: process.env.MC_PASS || '',
   auth: 'offline',
+  owner: 'SolTheMayo',
+  chatRegex: /^(?:(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*)*SolTheMayo\s*[:»>›\-]+\s*(\S+)\s*$/,
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
-  startCommands: [],
-  backRetries: 3,
-  backWaitMs: 8000,
-  aimAtWater: false,
-  waterMin: 2,
-  waterMax: 32,
-  castTimeoutMs: 45000,
-  maxTimeoutsInRow: 10,
+  castTimeoutMs: 40000,
   stopWhenFull: true,
   maxReconnect: 10,
   reconnectDelayMs: 20000,
 }
 
-if (!/^[A-Za-z0-9_]{3,16}$/.test(CONFIG.username) || !CONFIG.password) {
-  console.log('Username (3-16 huruf/angka/_) dan password wajib diisi (MC_USER dan MC_PASS).')
-  process.exit(1)
-}
-
+const COMMANDS = new Set(['sini1', 'info1', 'stop1', 'lanjut1', 'ikut1'])
 const AVOID_FOOD = new Set([
   'pufferfish', 'spider_eye', 'rotten_flesh', 'poisonous_potato', 'chicken',
   'suspicious_stew', 'golden_apple', 'enchanted_golden_apple', 'chorus_fruit',
@@ -35,15 +32,6 @@ const AVOID_FOOD = new Set([
 ])
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const stats = { casts: 0, catches: 0, meals: 0, deaths: 0 }
-const state = { dead: false, recovering: false, needFace: true }
-let bot = null
-let shuttingDown = false
-let reconnects = 0
-let moving = false
-
-const statsText = () =>
-  `Lemparan ${stats.casts}, dapat ${stats.catches}, makan ${stats.meals}, mati ${stats.deaths}x`
 
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -52,38 +40,103 @@ function withTimeout(promise, ms) {
   ])
 }
 
-function report(text) {
-  console.log('[laporan]', text)
+const active = (botState) => botState.bot && !botState.shuttingDown
+const idle = (botState) => botState.state.paused || botState.state.following
+
+function tell(botState, text) {
+  console.log(`[${botState.username}][balas]`, text)
+  try { botState.bot.chat(`/msg ${CONFIG.owner} ${text}`) } catch {}
 }
 
-function shutdown(code) {
-  if (shuttingDown) return
-  shuttingDown = true
-  console.log(`Berhenti. ${statsText()}`)
-  try { bot.quit() } catch {}
-  setTimeout(() => process.exit(code), 500)
+async function dropRod(botState) {
+  try { await botState.bot.unequip('hand') } catch {}
 }
 
-const onStopSignal = () => {
-  if (shuttingDown) return
-  report(`Bot dihentikan. ${statsText()}.`)
-  shutdown(0)
+function stopFollow(botState) {
+  botState.state.following = false
+  clearInterval(botState.followTimer)
+  botState.followTimer = null
+  try { botState.bot.pathfinder.setGoal(null) } catch {}
 }
-process.on('SIGINT', onStopSignal)
-process.on('SIGTERM', onStopSignal)
-process.on('uncaughtException', (e) => {
-  console.log('CRASH:', e && e.stack ? e.stack : e)
-  report(`Bot crash: ${e && e.message ? e.message : e}`)
-  shutdown(1)
-})
 
-const active = (b) => b === bot && !shuttingDown
+async function pauseWith(botState, reason) {
+  botState.state.paused = true
+  stopFollow(botState)
+  await dropRod(botState)
+  tell(botState, reason)
+}
 
+function statusText(botState) {
+  const b = botState.bot
+  const mode = botState.state.following ? 'mengikuti' : botState.state.paused ? 'berhenti' : 'memancing'
+  const p = b.entity.position
+  return `Status: ${mode} | Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches} | Makan: ${botState.stats.meals} | HP: ${Math.round(b.health)} | Slot Kosong: ${b.inventory.emptySlotCount()} | Pos: ${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+}
+
+function startFollow(botState) {
+  const b = botState.bot
+  const entity = b.players[CONFIG.owner] && b.players[CONFIG.owner].entity
+  if (!entity) {
+    tell(botState, 'Saya tidak melihat kamu. Kirim sini1 dulu.')
+    return
+  }
+  botState.state.paused = false
+  botState.state.following = true
+  dropRod(botState)
+  const movements = new Movements(b)
+  movements.canDig = false
+  movements.allow1by1towers = false
+  movements.allowSprinting = true
+  b.pathfinder.setMovements(movements)
+  b.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true)
+  clearInterval(botState.followTimer)
+  botState.followTimer = setInterval(() => {
+    if (!botState.state.following) return
+    const e = b.players[CONFIG.owner] && b.players[CONFIG.owner].entity
+    if (e) b.pathfinder.setGoal(new goals.GoalFollow(e, 2), true)
+  }, 3000)
+  tell(botState, 'Mengikuti kamu. Kirim stop1 untuk berhenti.')
+}
+
+async function runCommand(botState, cmd) {
+  if (cmd === 'info1') {
+    tell(botState, statusText(botState))
+  } else if (cmd === 'stop1') {
+    await pauseWith(botState, 'Berhenti manual. Kirim lanjut1 untuk memancing lagi.')
+  } else if (cmd === 'lanjut1') {
+    stopFollow(botState)
+    botState.state.paused = false
+    tell(botState, 'Melanjutkan memancing ke arah pandang saat ini.')
+  } else if (cmd === 'ikut1') {
+    startFollow(botState)
+  } else if (cmd === 'sini1') {
+    botState.state.paused = true
+    stopFollow(botState)
+    await dropRod(botState)
+    botState.bot.chat(`/tpa ${CONFIG.owner}`)
+    await sleep(2000)
+    tell(botState, 'Sudah kirim /tpa, tolong /tpaccept. Setelah sampai kirim lanjut1 atau ikut1.')
+  }
+}
+
+function handleChat(botState, raw) {
+  const msg = raw.replace(/§./g, '').trim()
+  if (msg.includes(CONFIG.owner)) console.log(`[${botState.username}][chat-owner]`, JSON.stringify(msg))
+  const m = msg.match(CONFIG.chatRegex)
+  if (!m) return
+  const cmd = m[1].toLowerCase()
+  if (!COMMANDS.has(cmd)) return
+  const now = Date.now()
+  if (cmd === botState.lastCmd.name && now - botState.lastCmd.t < 2000) return
+  botState.lastCmd.name = cmd
+  botState.lastCmd.t = now
+  console.log(`[${botState.username}] Perintah dari ${CONFIG.owner}:`, cmd)
+  runCommand(botState, cmd).catch((e) => console.log(`[${botState.username}] Gagal perintah:`, e.message))
+}
 
 async function dismissMenu(b) {
   for (let i = 0; i < 3; i++) {
     if (b.currentWindow) {
-      console.log('Menu terbuka setelah login, ditutup (Esc)')
       try { b.closeWindow(b.currentWindow) } catch {}
     }
     await sleep(1000)
@@ -100,24 +153,20 @@ function pickFood(b) {
   return best ? best.item : null
 }
 
-async function eat(b) {
-  console.log(`Lapar (food ${b.food}/20), mulai makan`)
-  for (let i = 0; i < 12 && active(b) && !state.dead && b.food < CONFIG.eatUntil; i++) {
+async function eat(botState) {
+  const b = botState.bot
+  console.log(`[${botState.username}] Lapar (food ${b.food}/20), mulai makan`)
+  for (let i = 0; i < 12 && active(botState) && !idle(botState) && b.food < CONFIG.eatUntil; i++) {
     const item = pickFood(b)
-    if (!item) {
-      console.log('Tidak ada makanan di inventori, lanjut memancing')
-      return
-    }
+    if (!item) return
     try {
       await b.equip(item, 'hand')
       await withTimeout(b.consume(), 8000)
-      stats.meals++
+      botState.stats.meals++
     } catch (e) {
-      console.log('Gagal makan:', e.message)
       await sleep(1500)
     }
   }
-  console.log(`Selesai makan (food ${b.food}/20)`)
 }
 
 async function ensureRod(b) {
@@ -129,185 +178,192 @@ async function ensureRod(b) {
   return true
 }
 
-async function faceWater(b) {
-  const water = b.registry.blocksByName.water
-  if (!water || !b.entity) return false
-  const eye = b.entity.position.offset(0, b.entity.height, 0)
-  const spots = b
-    .findBlocks({ matching: water.id, maxDistance: CONFIG.waterMax, count: 200 })
-    .map((p) => ({ p, d: p.offset(0.5, 0.5, 0.5).distanceTo(eye) }))
-    .filter((x) => x.d >= CONFIG.waterMin)
-    .sort((x, y) => x.d - y.d)
-  if (!spots.length) return false
-  await b.lookAt(spots[0].p.offset(0.5, 0.9, 0.5), true)
-  return true
-}
+// SISTEM MANCING SANGAT RESPONSIDF (LAMA)
+function customFish(botState) {
+  return new Promise((resolve, reject) => {
+    const b = botState.bot
+    let myBobberId = null
+    let fishTimeout = null
 
-async function recover(b) {
-  if (state.recovering) return
-  state.recovering = true
-  console.log('Bot mati dan sudah respawn, mencoba /back')
-  await sleep(3000)
-  let ok = false
-  for (let i = 1; i <= CONFIG.backRetries && active(b); i++) {
-    const from = b.entity ? b.entity.position.clone() : null
-    console.log(`Kirim /back (percobaan ${i}/${CONFIG.backRetries})`)
-    b.chat('/back')
-    await sleep(CONFIG.backWaitMs)
-    const moved = from && b.entity ? b.entity.position.distanceTo(from) > 3 : true
-    if (moved && (!CONFIG.aimAtWater || (await faceWater(b)))) {
-      ok = true
-      break
+    const onEntitySpawn = (entity) => {
+      if (entity.name === 'fishing_bobber' || entity.entityType === 101) {
+        if (entity.position.distanceTo(b.entity.position) < 4) {
+          myBobberId = entity.id
+        }
+      }
     }
-    console.log('Belum kembali ke spot memancing')
-  }
-  if (!active(b)) return
-  report(`Mati ke-${stats.deaths}. ${statsText()}.`)
-  if (!ok) {
-    report('Gagal kembali ke spot memancing, berhenti.')
-    return shutdown(1)
-  }
-  state.needFace = false
-  state.dead = false
-  state.recovering = false
-  console.log('Kembali ke spot, lanjut memancing')
+
+    const onEntityUpdate = (entity) => {
+      if (myBobberId && entity.id === myBobberId) {
+        const hasVelocityY = entity.velocity && entity.velocity.y < -0.08
+        const isBiting = entity.metadata && entity.metadata.some((m) => m === true || m === 1)
+
+        if (hasVelocityY || isBiting) {
+          cleanup()
+          b.activateItem()
+          resolve()
+        }
+      }
+    }
+
+    const cleanup = () => {
+      b.removeListener('entitySpawn', onEntitySpawn)
+      b.removeListener('entityUpdate', onEntityUpdate)
+      if (fishTimeout) clearTimeout(fishTimeout)
+    }
+
+    b.on('entitySpawn', onEntitySpawn)
+    b.on('entityUpdate', onEntityUpdate)
+
+    try {
+      b.activateItem()
+      fishTimeout = setTimeout(() => {
+        cleanup()
+        try { b.activateItem() } catch {}
+        reject(new Error('timeout'))
+      }, CONFIG.castTimeoutMs)
+    } catch (err) {
+      cleanup()
+      return reject(err)
+    }
+  })
 }
 
-async function fishLoop(b) {
-  console.log('Mulai auto fishing')
-  report('Online dan mulai memancing.')
-  let timeoutsInRow = 0
-  while (active(b)) {
-    if (state.dead || state.recovering) {
+async function fishLoop(botState) {
+  const b = botState.bot
+  console.log(`[${botState.username}] Siap memancing...`)
+
+  while (active(botState)) {
+    if (idle(botState)) {
       await sleep(500)
       continue
     }
-    if (state.needFace) {
-      if (CONFIG.aimAtWater && !(await faceWater(b))) {
-        report('Tidak ada air dalam jangkauan di posisi bot, berhenti memancing.')
-        return shutdown(1)
-      }
-      state.needFace = false
-    }
-    if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
-      await eat(b)
-      state.needFace = true
-      continue
-    }
-    if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
-      report(`Inventori penuh, berhenti. ${statsText()}.`)
-      return shutdown(0)
-    }
+
     let hasRod = false
     try {
       hasRod = await ensureRod(b)
-    } catch (e) {
-      console.log('Gagal memegang pancingan:', e.message)
-    }
+    } catch (e) {}
+
     if (!hasRod) {
-      if (state.dead || state.recovering) continue
-      report(`Tidak ada fishing rod, berhenti. ${statsText()}.`)
-      return shutdown(1)
+      await sleep(3000)
+      continue
     }
 
-    stats.casts++
+    if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
+      await eat(botState)
+      continue
+    }
+
+    if (CONFIG.stopWhenFull && b.inventory.emptySlotCount() < 2) {
+      await pauseWith(botState, `Inventori penuh. Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
+      continue
+    }
+
+    botState.stats.casts++
     try {
-      await withTimeout(b.fish(), CONFIG.castTimeoutMs)
-      stats.catches++
-      timeoutsInRow = 0
-      reconnects = 0
+      await customFish(botState)
+      botState.stats.catches++
+      botState.reconnects = 0
+      console.log(`[${botState.username}] Berhasil! Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
     } catch (e) {
-      if (state.dead || state.recovering) {
-        timeoutsInRow = 0
+      if (idle(botState)) {
       } else if (e.message === 'timeout') {
-        timeoutsInRow++
-        try { b.activateItem() } catch {}
         await sleep(1500)
-        if (timeoutsInRow === 5) state.needFace = true
-        if (timeoutsInRow >= CONFIG.maxTimeoutsInRow) {
-          report(`Terlalu sering tidak ada gigitan, berhenti. ${statsText()}.`)
-          return shutdown(1)
-        }
       } else {
-        console.log('Error memancing:', e.message)
         await sleep(2000)
       }
     }
-    if (stats.casts % 20 === 0) console.log(`${statsText()}, food ${b.food}/20`)
-    await sleep(300)
+
+    await sleep(1000)
   }
 }
 
-function scheduleReconnect() {
-  if (shuttingDown) return
-  reconnects++
-  if (reconnects > CONFIG.maxReconnect) {
-    console.log('Terlalu banyak gagal sambung ulang')
-    return shutdown(1)
-  }
-  console.log(`Sambung ulang dalam ${CONFIG.reconnectDelayMs / 1000} detik (${reconnects}/${CONFIG.maxReconnect})`)
-  setTimeout(start, CONFIG.reconnectDelayMs)
+function createBotAccount(acc, delayMs) {
+  setTimeout(() => {
+    const botState = {
+      username: acc.username,
+      password: acc.password,
+      bot: null,
+      shuttingDown: false,
+      reconnects: 0,
+      followTimer: null,
+      stats: { casts: 0, catches: 0, meals: 0 },
+      state: { paused: false, following: false },
+      lastCmd: { name: '', t: 0 }
+    }
+
+    function connect() {
+      console.log(`[${botState.username}] Menghubungkan ke ${CONFIG.host}...`)
+      
+      const b = mineflayer.createBot({
+        host: CONFIG.host,
+        port: CONFIG.port,
+        username: botState.username,
+        auth: CONFIG.auth,
+      })
+
+      botState.bot = b
+      b.loadPlugin(pathfinder)
+      botState.state.paused = false
+      botState.state.following = false
+      let authSent = false
+
+      b.on('messagestr', (msg) => {
+        if (!authSent) {
+          if (/\/register/i.test(msg)) {
+            authSent = true
+            b.chat(`/register ${botState.password} ${botState.password}`)
+          } else if (/\/login/i.test(msg)) {
+            authSent = true
+            b.chat(`/login ${botState.password}`)
+          }
+        }
+        handleChat(botState, msg)
+      })
+
+      b.on('error', (e) => console.log(`[${botState.username}] Error:`, e.message))
+      b.on('kicked', (r) => console.log(`[${botState.username}] Kicked:`, r))
+      b.on('death', () => {
+        console.log(`[${botState.username}] Mati, bersiap untuk respawn...`)
+        botState.state.paused = true
+        stopFollow(botState)
+      })
+
+      b.on('respawn', async () => {
+        console.log(`[${botState.username}] Respawned. Menunggu 3 detik sebelum mengirim /back...`)
+        await sleep(3000)
+        if (active(botState)) {
+          b.chat('/back')
+          console.log(`[${botState.username}] Mengirim /back dan melanjutkan memancing.`)
+          await sleep(2000)
+          botState.state.paused = false
+        }
+      })
+
+      b.once('end', () => {
+        console.log(`[${botState.username}] Terputus. Rekap Akhir -> Total Lemparan: ${botState.stats.casts} | Total Didapat: ${botState.stats.catches}`)
+        if (!botState.shuttingDown) {
+          botState.reconnects++
+          if (botState.reconnects <= CONFIG.maxReconnect) {
+            setTimeout(connect, CONFIG.reconnectDelayMs)
+          }
+        }
+      })
+
+      b.once('spawn', async () => {
+        console.log(`[${botState.username}] Sudah masuk server`)
+        for (let i = 0; i < 30 && !authSent; i++) await sleep(500)
+        await sleep(CONFIG.afterLoginWaitMs)
+        await dismissMenu(b)
+        fishLoop(botState).catch((e) => console.log(`[${botState.username}] ERROR loop:`, e.message))
+      })
+    }
+
+    connect()
+  }, delayMs)
 }
 
-function start() {
-  if (shuttingDown) return
-  console.log('Menghubungkan ke', CONFIG.host, 'sebagai', CONFIG.username)
-  const b = mineflayer.createBot({
-    host: CONFIG.host,
-    port: CONFIG.port,
-    username: CONFIG.username,
-    auth: CONFIG.auth,
-  })
-  bot = b
-  b.loadPlugin(pathfinder)
-  state.dead = false
-  state.recovering = false
-  state.needFace = true
-  let authSent = false
-
-  b.on('messagestr', (msg) => {
-    if (/have to move/i.test(msg) && state.recovering) wiggle(b)
-    if (/login|register|password|afk|kick|cooldown/i.test(msg)) console.log('[chat]', msg)
-    if (authSent) return
-    if (/\/register/i.test(msg)) {
-      authSent = true
-      b.chat(`/register ${CONFIG.password} ${CONFIG.password}`)
-    } else if (/\/login/i.test(msg)) {
-      authSent = true
-      b.chat(`/login ${CONFIG.password}`)
-    }
-  })
-
-  b.on('error', (e) => console.log('Error:', e.message))
-  b.on('kicked', (r) => console.log('Kicked:', r))
-  b.on('death', () => {
-    stats.deaths++
-    state.dead = true
-    console.log(`Bot mati (ke-${stats.deaths})`)
-  })
-  b.on('respawn', () => {
-    if (state.dead) recover(b).catch((e) => console.log('ERROR recover:', e.message))
-  })
-  b.once('end', (r) => {
-    console.log('Koneksi terputus:', r)
-    if (b === bot) scheduleReconnect()
-  })
-
-  b.once('spawn', async () => {
-    console.log('Bot sudah masuk server')
-    for (let i = 0; i < 30 && !authSent; i++) await sleep(500)
-    console.log(`Menunggu ${CONFIG.afterLoginWaitMs / 1000} detik setelah login`)
-    await sleep(CONFIG.afterLoginWaitMs)
-    await dismissMenu(b)
-    for (const cmd of CONFIG.startCommands) {
-      b.chat(cmd)
-      await sleep(3000)
-    }
-    fishLoop(b).catch((e) => {
-      console.log('ERROR loop:', e && e.stack ? e.stack : e)
-      shutdown(1)
-    })
-  })
-}
-
-start()
+// Jalankan ke-4 bot dengan jeda 5 detik antar login
+ACCOUNTS.forEach((acc, index) => {
+  createBotAccount(acc, index * 5000)
+})
