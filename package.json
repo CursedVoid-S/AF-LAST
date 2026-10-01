@@ -1,9 +1,16 @@
 {
   "name": "fishing-bot",
   "version": "1.0.0",
+  "description": "Bot memancing Minecraft (Mineflayer) dengan kontrol /chat lewat Discord",
   "main": "fishing.js",
+  "scripts": {
+    "start": "node fishing.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "discord.js": "^14.16.0",
-    "mineflayer": "^4.23.0"
+    "mineflayer": "latest"
   }
 }
