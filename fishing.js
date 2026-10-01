@@ -10,7 +10,7 @@ const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/155511726213693852
 const ACCOUNTS = [
   { username: 'Solaris', password: 'memek#1' },
   { username: 'Izanagi', password: 'memek#1' },
-  { username: 'Izanami', password: 'memek#1' },
+  //{ username: 'Izanami', password: 'memek#1' },//
   { username: 'Itadori', password: 'memek#1' },
 ]
 
