@@ -28,6 +28,7 @@ const CONFIG = {
   host: 'play.sunnysmp.xyz',
   port: 25565,
   auth: 'offline',
+  version: process.env.MC_VERSION || '1.21.6',
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
@@ -39,6 +40,7 @@ const CONFIG = {
   statusUpdateIntervalMs: 25000,
   loginStaggerMs: 25000,
   chatStaggerMs: 1000,
+  errorNotifyCooldownMs: 60000,
 }
 
 const AVOID_FOOD = new Set([
@@ -302,6 +304,7 @@ function trackCatches(s, b) {
 async function fishLoop(s, b) {
   console.log(`[${s.username}] Siap memancing!`)
   let fullNotified = false
+  let noRodNotified = false
 
   while (isAlive(s, b)) {
     if (s.state.paused) {
@@ -312,9 +315,14 @@ async function fishLoop(s, b) {
     let hasRod = false
     try { hasRod = await ensureRod(b) } catch {}
     if (!hasRod) {
+      if (!noRodNotified) {
+        noRodNotified = true
+        sendDiscordEvent(s.username, '🎣 Fishing rod tidak ditemukan di inventori.')
+      }
       await sleep(3000)
       continue
     }
+    noRodNotified = false
 
     if (b.food !== undefined && b.food <= CONFIG.eatBelow) {
       await eat(s, b)
@@ -489,13 +497,14 @@ function createBotAccount(acc, delayMs) {
 
   function connect() {
     if (s.shuttingDown) return
-    sendDiscordEvent(s.username, `Menghubungkan ke ${CONFIG.host}...`)
+    sendDiscordEvent(s.username, `Menghubungkan ke ${CONFIG.host} (versi ${CONFIG.version})...`)
 
     const b = mineflayer.createBot({
       host: CONFIG.host,
       port: CONFIG.port,
       username: s.username,
       auth: CONFIG.auth,
+      ...(CONFIG.version ? { version: CONFIG.version } : {}),
     })
 
     s.bot = b
@@ -505,6 +514,7 @@ function createBotAccount(acc, delayMs) {
 
     let authSent = false
     let firstSpawn = true
+    let lastErrAt = 0
 
     b.on('messagestr', (msg) => {
       if (authSent) return
@@ -517,7 +527,15 @@ function createBotAccount(acc, delayMs) {
       }
     })
 
-    b.on('error', (e) => sendDiscordEvent(s.username, `⚠️ Error: ${e.message}`))
+    b.on('error', (e) => {
+      console.log(`[${s.username}] Error: ${e.message}`)
+      // Batasi notifikasi agar webhook tidak kebanjiran
+      if (Date.now() - lastErrAt > CONFIG.errorNotifyCooldownMs) {
+        lastErrAt = Date.now()
+        sendOrEditDiscord(`**[${s.username}]** ⚠️ Error: ${e.message}`).catch(() => {})
+      }
+    })
+
     b.on('kicked', (r) => sendDiscordEvent(s.username, `❌ Kicked: ${typeof r === 'string' ? r : JSON.stringify(r)}`))
 
     b.on('death', () => {
@@ -595,4 +613,6 @@ process.on('SIGINT', () => {
   setTimeout(() => process.exit(0), 1000)
 })
 
+// Cegah proses mati karena error dari library (contoh: "unknown chat format code")
+process.on('uncaughtException', (e) => console.log('[uncaughtException]', e && e.message ? e.message : e))
 process.on('unhandledRejection', (e) => console.log('[unhandledRejection]', e && e.message ? e.message : e))
