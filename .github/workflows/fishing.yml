@@ -1,22 +1,27 @@
-name: Run 4 AFK Fishing Bots
+name: Fishing Bot
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+concurrency:
+  group: fishing-bot
+  cancel-in-progress: true
 
 jobs:
-  run-bots:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Run All 4 Bots
-        run: node fishing.js
+      - run: npm install
+      - run: node fishing.js
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+          ALLOWED_USER_IDS: ${{ secrets.ALLOWED_USER_IDS }}
