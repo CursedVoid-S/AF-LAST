@@ -1,7 +1,7 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 
-// Mengambil Username & Password dari Input Terminal / Workflow
+// Ambil username & password dari argumen CLI
 const username = process.argv[2] || 'Solaris'
 const password = process.argv[3] || 'memek#1'
 
@@ -14,7 +14,7 @@ const CONFIG = {
   eatBelow: 6,
   eatUntil: 18,
   afterLoginWaitMs: 5000,
-  castTimeoutMs: 40000,
+  castTimeoutMs: 30000,
   stopWhenFull: true,
   maxReconnect: 10,
   reconnectDelayMs: 20000,
@@ -174,28 +174,30 @@ async function ensureRod(b) {
   return true
 }
 
+// LOGIKA AUTOFISH PRESISI: Mengisolasikan ID Kail Bot
 function customFish(botState) {
   return new Promise((resolve, reject) => {
     const b = botState.bot
     let myBobberId = null
     let fishTimeout = null
 
+    // Tangkap entitas kail yang diproduksi saat bot ini memakai pancingan
     const onEntitySpawn = (entity) => {
       if (entity.name === 'fishing_bobber' || entity.entityType === 101) {
-        if (entity.position.distanceTo(b.entity.position) < 4) {
+        // Hanya klaim kail yang muncul dalam radius < 2 blok dari bot
+        if (entity.position.distanceTo(b.entity.position) < 2) {
           myBobberId = entity.id
         }
       }
     }
 
+    // Hanya deteksi gerakan kail jika ID-nya SAMA dengan myBobberId
     const onEntityUpdate = (entity) => {
       if (myBobberId && entity.id === myBobberId) {
-        const hasVelocityY = entity.velocity && entity.velocity.y < -0.08
-        const isBiting = entity.metadata && entity.metadata.some((m) => m === true || m === 1)
-
-        if (hasVelocityY || isBiting) {
+        // Cek Kecepatan Y (tenggelam disambar ikan)
+        if (entity.velocity && entity.velocity.y < -0.1) {
           cleanup()
-          b.activateItem()
+          b.activateItem() // Tarik kail
           resolve()
         }
       }
@@ -211,7 +213,8 @@ function customFish(botState) {
     b.on('entityUpdate', onEntityUpdate)
 
     try {
-      b.activateItem()
+      b.activateItem() // Lempar kail
+
       fishTimeout = setTimeout(() => {
         cleanup()
         try { b.activateItem() } catch {}
@@ -263,13 +266,13 @@ async function fishLoop(botState) {
     } catch (e) {
       if (idle(botState)) {
       } else if (e.message === 'timeout') {
-        await sleep(1500)
+        await sleep(1000)
       } else {
         await sleep(2000)
       }
     }
 
-    await sleep(1000)
+    await sleep(800)
   }
 }
 
