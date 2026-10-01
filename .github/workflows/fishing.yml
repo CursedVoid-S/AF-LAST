@@ -1,27 +1,26 @@
-name: Fishing Bot
+name: Run 4 AFK Fishing Bots & Discord Status
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */6 * * *'
-
-concurrency:
-  group: fishing-bot
-  cancel-in-progress: true
 
 jobs:
-  run:
+  run-bots:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install
-      - run: node fishing.js
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Discord Status & Fishing Bots
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
-          ALLOWED_USER_IDS: ${{ secrets.ALLOWED_USER_IDS }}
+        run: |
+          node discord-status.js &
+          node fishing.js
