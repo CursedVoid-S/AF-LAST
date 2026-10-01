@@ -1,37 +1,22 @@
-name: Auto fishing
+name: Run 4 AFK Fishing Bots
 
 on:
   workflow_dispatch:
-    inputs:
-      username:
-        description: Username bot
-        required: true
-        default: BOTMARKET
-      password:
-        description: Password bot
-        required: true
-
-concurrency:
-  group: auto-fishing
-  cancel-in-progress: true
 
 jobs:
-  fish:
+  run-bots:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Sembunyikan password di log
-        env:
-          MC_PASS: ${{ inputs.password }}
-        run: echo "::add-mask::$MC_PASS"
-      - name: Install dependency
-        run: npm install --no-audit --no-fund
-      - name: Jalankan bot
-        env:
-          MC_USER: ${{ inputs.username }}
-          MC_PASS: ${{ inputs.password }}
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run All 4 Bots
         run: node fishing.js
