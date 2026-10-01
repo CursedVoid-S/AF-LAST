@@ -365,5 +365,5 @@ function createBotAccount(acc, delayMs) {
 
 // Jalankan ke-4 bot dengan jeda 5 detik antar login
 ACCOUNTS.forEach((acc, index) => {
-  createBotAccount(acc, index * 5000)
+  createBotAccount(acc, index * 25000)
 })
