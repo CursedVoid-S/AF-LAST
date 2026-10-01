@@ -10,10 +10,6 @@ on:
       password:
         description: Password bot
         required: true
-      report_to:
-        description: Kirim laporan lewat /msg ke pemain ini (kosongkan jika tidak perlu)
-        required: false
-        default: SolTheMayo
 
 concurrency:
   group: auto-fishing
@@ -38,5 +34,4 @@ jobs:
         env:
           MC_USER: ${{ inputs.username }}
           MC_PASS: ${{ inputs.password }}
-          REPORT_TO: ${{ inputs.report_to }}
         run: node fishing.js
