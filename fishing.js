@@ -18,7 +18,7 @@ const ALLOWED_USER_IDS = (process.env.ALLOWED_USER_IDS || '')       // ID Discor
 
 // Daftar Akun
 const ACCOUNTS = [
-  { username: 'SolTheMayo', password: 'memek#1' },
+  { username: 'SolTheMayo', password: 'piana#1#' },
   //{ username: 'Izanagi', password: 'memek#1' },//
   //{ username: 'Izanami', password: 'memek#1' },//
   //{ username: 'Itadori', password: 'memek#1' },//
